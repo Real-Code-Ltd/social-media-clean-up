@@ -134,7 +134,7 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         
                     log_info("Opening activity options menu...")
                     btn.click(force=True)
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(300) # Fast menu wait
                     
                     # Search for Unlike, Delete, Remove reaction, Remove tag, or Remove
                     menu_items = [
@@ -153,7 +153,7 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                             log_info(f"Found menu option: '{item_text}'. Clicking it...")
                             option.click(force=True)
                             option_clicked = True
-                            page.wait_for_timeout(2000)
+                            page.wait_for_timeout(500) # Fast confirmation wait
                             break
                             
                     if option_clicked:
@@ -163,22 +163,22 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         if confirm_btn.count() > 0 and confirm_btn.is_visible():
                             log_info("Clicking confirmation button in dialog...")
                             confirm_btn.click(force=True)
-                            page.wait_for_timeout(2000)
+                            page.wait_for_timeout(500) # Fast dialog close wait
                             
                         deleted_count += 1
                         action_taken_in_this_view = True
                         log_success(f"Cleaned up activity item #{deleted_count}!")
-                        page.wait_for_timeout(random.uniform(2000, 4000))
+                        page.wait_for_timeout(random.uniform(500, 1000)) # Fast cleanup delay
                         break # Break to refresh elements list
                     else:
                         # Close menu if no action option was found
                         page.keyboard.press("Escape")
-                        page.wait_for_timeout(500)
+                        page.wait_for_timeout(200)
                         
                 except Exception as ex:
                     log_error(f"Error handling activity item: {ex}")
                     page.keyboard.press("Escape")
-                    page.wait_for_timeout(500)
+                    page.wait_for_timeout(200)
                     continue
                     
             if action_taken_in_this_view:
@@ -187,7 +187,7 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                 scroll_attempts_without_actions += 1
                 log_info(f"No actions taken on current view. Scrolling down (attempt {scroll_attempts_without_actions}/{max_scroll_attempts})...")
                 page.evaluate("window.scrollBy(0, 800)")
-                page.wait_for_timeout(3000)
+                page.wait_for_timeout(1000) # Fast scroll wait
                 
         log_success(f"Cleanup finished! Processed {deleted_count} activity items.")
         context.close()
