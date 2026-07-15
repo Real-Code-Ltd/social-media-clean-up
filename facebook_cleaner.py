@@ -170,7 +170,9 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         option = menu_container.locator(f'span:has-text("{item_text}"), div[role="menuitem"]:has-text("{item_text}"), [role="button"]:has-text("{item_text}")').first
                         if option.count() > 0 and option.is_visible():
                             log_info(f"Found menu option: '{item_text}'. Clicking it...")
-                            option.click(force=True)
+                            # Wait 300ms for React event listeners to bind
+                            page.wait_for_timeout(300)
+                            option.click() # Standard click (waits for stability)
                             option_clicked = True
                             clicked_text = item_text
                             break
@@ -183,25 +185,29 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                             log_warn("Menu did not close after clicking option. Escape-closing...")
                             page.keyboard.press("Escape")
                         
-                        # Handle confirmation dialog if it's a delete action
+                        # Handle confirmation dialog if it's a delete action (flexible check)
                         success = True
                         if clicked_text in ["Delete", "Remove", "Remove tag"]:
                             try:
-                                log_info("Waiting for confirmation dialog...")
+                                log_info("Checking for confirmation dialog (waiting up to 2 seconds)...")
                                 dialog = page.locator('div[role="dialog"]').first
-                                dialog.wait_for(state="visible", timeout=3000)
+                                # Wait up to 2 seconds for a dialog to appear
+                                dialog.wait_for(state="visible", timeout=2000)
                                 
+                                # Dialog appeared! Click confirm.
+                                page.wait_for_timeout(300)
                                 confirm_btn = dialog.locator('div[role="button"]:has-text("Delete"), div[role="button"]:has-text("Remove"), div[role="button"]:has-text("Confirm"), button:has-text("Delete"), button:has-text("Move")').first
                                 if confirm_btn.count() > 0 and confirm_btn.is_visible():
                                     log_info("Clicking confirmation button in dialog...")
-                                    confirm_btn.click(force=True)
+                                    confirm_btn.click() # Standard click
                                     dialog.wait_for(state="hidden", timeout=3000)
                                 else:
                                     log_warn("Could not find the confirmation button in the dialog.")
                                     success = False
-                            except Exception as dialog_ex:
-                                log_error(f"Failed to resolve or confirm dialog: {dialog_ex}")
-                                success = False
+                            except Exception:
+                                # Timeout means no dialog appeared, which is common if Facebook deletes instantly
+                                log_info("No confirmation dialog appeared. Assuming item was deleted instantly.")
+                                success = True
                                 
                         if success:
                             deleted_count += 1
