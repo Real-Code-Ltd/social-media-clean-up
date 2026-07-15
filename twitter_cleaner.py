@@ -118,8 +118,8 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                 if profile_link.count() > 0:
                     href = profile_link.get_attribute("href")
                     if href and href != "/profile" and href != "/":
-                        profile_url = f"https://x.com{href}"
-                        log_info(f"Detected profile handle from sidebar: {href}. Navigating directly...")
+                        profile_url = f"https://x.com{href}/with_replies"
+                        log_info(f"Detected profile handle from sidebar: {href}. Navigating directly to replies...")
                         page.goto(profile_url)
                         page.wait_for_load_state("domcontentloaded")
                         navigated = True
@@ -141,6 +141,13 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                         if "/profile" not in page.url and "/home" not in page.url:
                             log_success(f"Successfully redirected to: {page.url}")
                             profile_url = page.url
+                            if not profile_url.endswith("/with_replies"):
+                                if profile_url.endswith("/"):
+                                    profile_url = profile_url[:-1]
+                                profile_url += "/with_replies"
+                            log_info(f"Navigating to replies view: {profile_url}...")
+                            page.goto(profile_url)
+                            page.wait_for_load_state("domcontentloaded")
                             navigated = True
                             break
                         page.wait_for_timeout(500)
@@ -159,7 +166,7 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                 if profile_link.count() > 0:
                     href = profile_link.get_attribute("href")
                     if href and href != "/profile" and href != "/":
-                        profile_url = f"https://x.com{href}"
+                        profile_url = f"https://x.com{href}/with_replies"
                         page.goto(profile_url)
                         page.wait_for_load_state("domcontentloaded")
                         navigated = True
