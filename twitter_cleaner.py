@@ -212,7 +212,7 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                         
                         btn_to_click = unretweet_btn.first if unretweet_btn.count() > 0 else tweet.locator('[data-testid="retweet"]').first
                         btn_to_click.click(force=True)
-                        page.wait_for_timeout(1000)
+                        page.wait_for_timeout(300) # Fast menu wait
                         
                         # A pop-up menu appears with "Undo Repost"
                         undo_btn = page.locator('[role="menuitem"]:has-text("Undo Repost"), [role="menuitem"]:has-text("Undo repost"), span:has-text("Undo Repost"), span:has-text("Undo repost")').first
@@ -222,12 +222,12 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                             reposts_undone_count += 1
                             action_taken_in_this_view = True
                             log_success(f"Undone repost #{reposts_undone_count}!")
-                            page.wait_for_timeout(random.uniform(2000, 4000))
+                            page.wait_for_timeout(random.uniform(500, 1000)) # Fast cleanup delay
                             break # Break out of inner loop to refresh tweets list and avoid stale element reference
                         else:
                             log_warn("Could not find 'Undo Repost' button in dropdown menu.")
                             page.keyboard.press("Escape")
-                            page.wait_for_timeout(500)
+                            page.wait_for_timeout(200)
                             
                     # Otherwise, it's our own post. Let's delete it.
                     caret_btn = tweet.locator('[data-testid="caret"]')
@@ -235,14 +235,14 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                         tweet.scroll_into_view_if_needed()
                         log_info("Deleting own tweet...")
                         caret_btn.first.click(force=True)
-                        page.wait_for_timeout(1000)
+                        page.wait_for_timeout(300) # Fast menu wait
                         
                         # Look for "Delete" menuitem
                         delete_btn = page.locator('[role="menuitem"]:has-text("Delete"), span:has-text("Delete")').first
                             
                         if delete_btn.count() > 0:
                             delete_btn.click(force=True)
-                            page.wait_for_timeout(1000)
+                            page.wait_for_timeout(300)
                             
                             # Confirmation popup
                             confirm_btn = page.locator('[data-testid="confirmationSheetConfirm"], button:has-text("Delete")').first
@@ -252,21 +252,21 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                                 deleted_count += 1
                                 action_taken_in_this_view = True
                                 log_success(f"Deleted tweet #{deleted_count}!")
-                                page.wait_for_timeout(random.uniform(2500, 4500))
+                                page.wait_for_timeout(random.uniform(600, 1200)) # Fast cleanup delay
                                 break # Break to refresh tweets list
                             else:
                                 log_warn("Could not find 'Delete' confirmation button in modal.")
                                 page.keyboard.press("Escape")
-                                page.wait_for_timeout(500)
+                                page.wait_for_timeout(200)
                         else:
                             log_info("Menu item 'Delete' not found (this tweet might not belong to you). Closing menu...")
                             page.keyboard.press("Escape")
-                            page.wait_for_timeout(500)
+                            page.wait_for_timeout(200)
                 except Exception as ex:
                     log_error(f"Error handling tweet: {ex}")
                     # Try to hit Escape to dismiss any open dropdowns or overlays
                     page.keyboard.press("Escape")
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(300)
                     continue
             
             if action_taken_in_this_view:
@@ -277,7 +277,7 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                 scroll_attempts_without_actions += 1
                 log_info(f"No actions taken on current page. Scrolling down (attempt {scroll_attempts_without_actions}/{max_scroll_attempts})...")
                 page.evaluate("window.scrollBy(0, 1000)")
-                page.wait_for_timeout(3000)
+                page.wait_for_timeout(1000) # Fast scroll wait
         
         log_success(f"Cleanup finished! Deleted: {deleted_count} tweets, Undone: {reposts_undone_count} reposts.")
         context.close()
