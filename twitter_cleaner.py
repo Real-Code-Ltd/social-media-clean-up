@@ -187,13 +187,19 @@ def run_twitter_cleanup(user_data_dir, headless=False):
         log_info("Starting post deletion loop. Press Ctrl+C in terminal to stop.")
         
         while scroll_attempts_without_actions < max_scroll_attempts:
-            # Find all tweet elements on the page
-            tweets = page.locator('article[data-testid="tweet"]').all()
-            log_info(f"Found {len(tweets)} tweets in view.")
+            # Find all tweet elements on the page, excluding already processed ones
+            tweets = page.locator('article[data-testid="tweet"]:not([data-cleanup-processed="true"])').all()
+            log_info(f"Found {len(tweets)} unprocessed tweets in view.")
             
             action_taken_in_this_view = False
             
             for tweet in tweets:
+                # Mark tweet as processed so we don't evaluate it again
+                try:
+                    tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
+                except Exception:
+                    pass
+                
                 try:
                     # Let's check if this is a Repost or our own Tweet.
                     social_context = tweet.locator('[data-testid="socialContext"]')

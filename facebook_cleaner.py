@@ -119,13 +119,24 @@ def run_facebook_cleanup(user_data_dir, headless=False):
         
         while scroll_attempts_without_actions < max_scroll_attempts:
             # Find the 'actions' or 'three dots' buttons for the items in the main area of the Activity Log.
-            # Usually they are divs with aria-haspopup="menu" or labels containing Action/More.
-            actions_buttons = page.locator('div[role="main"] div[role="button"][aria-haspopup="menu"], div[role="main"] div[role="button"][aria-label*="Action"], div[role="main"] div[role="button"][aria-label*="More"]').all()
+            # We exclude buttons that we have already processed.
+            selector = (
+                'div[role="main"] div[role="button"][aria-haspopup="menu"]:not([data-cleanup-processed="true"]), '
+                'div[role="main"] div[role="button"][aria-label*="Action"]:not([data-cleanup-processed="true"]), '
+                'div[role="main"] div[role="button"][aria-label*="More"]:not([data-cleanup-processed="true"])'
+            )
+            actions_buttons = page.locator(selector).all()
             
-            log_info(f"Found {len(actions_buttons)} activity actions buttons in view.")
+            log_info(f"Found {len(actions_buttons)} unprocessed activity actions buttons in view.")
             action_taken_in_this_view = False
             
             for btn in actions_buttons:
+                # Immediately mark this button as processed so we don't try it again in subsequent queries
+                try:
+                    btn.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
+                except Exception:
+                    pass
+
                 try:
                     btn.scroll_into_view_if_needed()
                     
