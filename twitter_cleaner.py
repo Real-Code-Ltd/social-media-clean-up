@@ -206,6 +206,11 @@ def run_twitter_cleanup(user_data_dir, headless=False):
             action_taken_in_this_view = False
             
             for tweet in tweets:
+                # Check if we have been redirected away (e.g. to explore) during iteration
+                if "/explore" in page.url or "/home" in page.url or page.url.endswith("x.com/") or page.url.endswith("twitter.com/"):
+                    log_warn("Redirect detected during iteration. Breaking to return to profile...")
+                    break
+                    
                 # Mark tweet as processed so we don't evaluate it again
                 try:
                     tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
