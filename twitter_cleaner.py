@@ -74,13 +74,29 @@ def run_twitter_cleanup(user_data_dir, headless=False):
     
     with sync_playwright() as p:
         log_info(f"Launching browser with profile data directory: {user_data_dir}")
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=user_data_dir,
-            headless=headless,
-            args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
-            ignore_default_args=["--enable-automation"],
-            no_viewport=True
-        )
+        args = ["--start-maximized", "--disable-blink-features=AutomationControlled"]
+        ignore_default_args = ["--enable-automation"]
+        
+        try:
+            log_info("Attempting to launch system Google Chrome for maximum compatibility...")
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=headless,
+                channel="chrome",
+                args=args,
+                ignore_default_args=ignore_default_args,
+                no_viewport=True
+            )
+        except Exception as e:
+            log_warn(f"Could not launch system Google Chrome (channel='chrome'): {e}")
+            log_info("Falling back to Playwright's built-in Chromium browser...")
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=headless,
+                args=args,
+                ignore_default_args=ignore_default_args,
+                no_viewport=True
+            )
         
         # Open main page
         page = context.pages[0] if context.pages else context.new_page()
