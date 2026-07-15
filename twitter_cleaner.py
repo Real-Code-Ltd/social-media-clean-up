@@ -109,15 +109,17 @@ def run_twitter_cleanup(user_data_dir, headless=False):
         # Navigate to Profile
         log_info("Navigating to your profile page...")
         try:
-            profile_btn = page.locator('[aria-label="Profile"]')
-            profile_btn.click()
-            page.wait_for_load_state("networkidle")
-            log_success("Successfully navigated to Profile!")
-        except Exception as e:
-            log_warn(f"Could not click profile button on sidebar: {e}. Attempting direct navigation to profile...")
-            # We can find the profile handle by hovering/checking sidebar profile details, or navigate to https://x.com/profile which redirects
             page.goto("https://x.com/profile")
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
+            log_success("Successfully loaded profile redirects!")
+            
+            # Dismiss cookie consent banner if present
+            cookie_btn = page.locator('button:has-text("Refuse non-essential cookies"), button:has-text("Refuse optional cookies"), button:has-text("Close"), [aria-label="Close"]').first
+            if cookie_btn.count() > 0 and cookie_btn.is_visible():
+                log_info("Dismissing cookie consent banner...")
+                cookie_btn.click(force=True, timeout=3000)
+        except Exception as e:
+            log_warn(f"Navigation warning: {e}. Proceeding anyway...")
             
         page.wait_for_timeout(3000)
         
@@ -138,7 +140,6 @@ def run_twitter_cleanup(user_data_dir, headless=False):
             for tweet in tweets:
                 try:
                     # Let's check if this is a Repost or our own Tweet.
-                    # Retweets often have data-testid="socialContext" saying "You reposted"
                     social_context = tweet.locator('[data-testid="socialContext"]')
                     is_repost = False
                     if social_context.count() > 0:
@@ -146,8 +147,7 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                         if "reposted" in text or "retweeted" in text:
                             is_repost = True
                     
-                    # Also check if there is an active 'unretweet' button.
-                    # If it's a repost, we undo it.
+                    # Check if there is an active 'unretweet' button.
                     unretweet_btn = tweet.locator('[data-testid="unretweet"]')
                     if unretweet_btn.count() > 0 or is_repost:
                         # Highlight the repost to show what we are doing
@@ -155,21 +155,14 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                         log_info("Found repost. Undoing repost...")
                         
                         btn_to_click = unretweet_btn.first if unretweet_btn.count() > 0 else tweet.locator('[data-testid="retweet"]').first
-                        btn_to_click.click()
+                        btn_to_click.click(force=True)
                         page.wait_for_timeout(1000)
                         
-                        # A pop-up menu appears with "Undo Repost" or "Undo Repost"
-                        # Standard dropdown elements are role="menuitem"
-                        undo_btn = page.locator('[role="menuitem"]:has-text("Undo Repost")').first
-                        if undo_btn.count() == 0:
-                            undo_btn = page.locator('[role="menuitem"]:has-text("Undo repost")').first
-                        if undo_btn.count() == 0:
-                            undo_btn = page.locator('span:has-text("Undo Repost")').first
-                        if undo_btn.count() == 0:
-                            undo_btn = page.locator('span:has-text("Undo repost")').first
+                        # A pop-up menu appears with "Undo Repost"
+                        undo_btn = page.locator('[role="menuitem"]:has-text("Undo Repost"), [role="menuitem"]:has-text("Undo repost"), span:has-text("Undo Repost"), span:has-text("Undo repost")').first
                             
                         if undo_btn.count() > 0:
-                            undo_btn.click()
+                            undo_btn.click(force=True)
                             reposts_undone_count += 1
                             action_taken_in_this_view = True
                             log_success(f"Undone repost #{reposts_undone_count}!")
@@ -177,35 +170,29 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                             break # Break out of inner loop to refresh tweets list and avoid stale element reference
                         else:
                             log_warn("Could not find 'Undo Repost' button in dropdown menu.")
-                            # Press escape to close menu
                             page.keyboard.press("Escape")
                             page.wait_for_timeout(500)
                             
                     # Otherwise, it's our own post. Let's delete it.
                     caret_btn = tweet.locator('[data-testid="caret"]')
                     if caret_btn.count() > 0:
-                        # Scroll to the tweet
                         tweet.scroll_into_view_if_needed()
                         log_info("Deleting own tweet...")
-                        caret_btn.first.click()
+                        caret_btn.first.click(force=True)
                         page.wait_for_timeout(1000)
                         
                         # Look for "Delete" menuitem
-                        delete_btn = page.locator('[role="menuitem"]:has-text("Delete")').first
-                        if delete_btn.count() == 0:
-                            delete_btn = page.locator('span:has-text("Delete")').first
+                        delete_btn = page.locator('[role="menuitem"]:has-text("Delete"), span:has-text("Delete")').first
                             
                         if delete_btn.count() > 0:
-                            delete_btn.click()
+                            delete_btn.click(force=True)
                             page.wait_for_timeout(1000)
                             
                             # Confirmation popup
-                            confirm_btn = page.locator('[data-testid="confirmationSheetConfirm"]').first
-                            if confirm_btn.count() == 0:
-                                confirm_btn = page.locator('button:has-text("Delete")').first
+                            confirm_btn = page.locator('[data-testid="confirmationSheetConfirm"], button:has-text("Delete")').first
                                 
                             if confirm_btn.count() > 0:
-                                confirm_btn.click()
+                                confirm_btn.click(force=True)
                                 deleted_count += 1
                                 action_taken_in_this_view = True
                                 log_success(f"Deleted tweet #{deleted_count}!")
