@@ -145,9 +145,8 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         
                     log_info("Opening activity options menu...")
                     btn.click(force=True)
-                    
                     # Wait dynamically for the menu to appear
-                    menu_container = page.locator('div[role="menu"], [role="dialog"], [role="presentation"]').first
+                    menu_container = page.locator('div[role="menu"], div[role="dialog"], [role="presentation"]').first
                     try:
                         menu_container.wait_for(state="visible", timeout=1500)
                     except Exception:
@@ -166,35 +165,42 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                     option_clicked = False
                     clicked_text = ""
                     for item_text in menu_items:
-                        # Find the floating menu option
-                        option = page.locator(f'div[role="menuitem"]:has-text("{item_text}"), span:has-text("{item_text}")').first
+                        # Find the option ONLY inside the menu container that just opened
+                        option = menu_container.locator(f'span:has-text("{item_text}"), div[role="menuitem"]:has-text("{item_text}"), [role="button"]:has-text("{item_text}")').first
                         if option.count() > 0 and option.is_visible():
                             log_info(f"Found menu option: '{item_text}'. Clicking it...")
                             option.click(force=True)
                             option_clicked = True
                             clicked_text = item_text
-                            page.wait_for_timeout(500) # Fast confirmation wait
+                            page.wait_for_timeout(800) # Wait for click action to register
                             break
                             
                     if option_clicked:
                         # Handle confirmation dialog if it appears (common for deleting comments)
-                        confirm_btn = page.locator('div[role="dialog"] div[role="button"]:has-text("Delete"), div[role="dialog"] div[role="button"]:has-text("Remove"), div[role="dialog"] div[role="button"]:has-text("Confirm"), div[role="dialog"] button:has-text("Delete"), div[role="dialog"] button:has-text("Move")').first
-                        
-                        if confirm_btn.count() > 0 and confirm_btn.is_visible():
-                            log_info("Clicking confirmation button in dialog...")
-                            confirm_btn.click(force=True)
-                            page.wait_for_timeout(500) # Fast dialog close wait
+                        if clicked_text in ["Delete", "Remove", "Remove tag"]:
+                            try:
+                                dialog = page.locator('div[role="dialog"]').first
+                                # Wait for the confirmation dialog to become visible
+                                dialog.wait_for(state="visible", timeout=1500)
+                                confirm_btn = dialog.locator('div[role="button"]:has-text("Delete"), div[role="button"]:has-text("Remove"), div[role="button"]:has-text("Confirm"), button:has-text("Delete"), button:has-text("Move")').first
+                                
+                                if confirm_btn.count() > 0 and confirm_btn.is_visible():
+                                    log_info("Clicking confirmation button in dialog...")
+                                    confirm_btn.click(force=True)
+                                    page.wait_for_timeout(1000) # Wait for dialog to close
+                            except Exception as dialog_ex:
+                                log_warn(f"No confirmation dialog resolved: {dialog_ex}")
                             
                         deleted_count += 1
                         action_taken_in_this_view = True
                         log_success(f"Action '{clicked_text}' completed successfully for item #{deleted_count}!")
-                        page.wait_for_timeout(random.uniform(500, 1000)) # Fast cleanup delay
+                        page.wait_for_timeout(random.uniform(1500, 2500)) # Let Facebook process request
                         break # Break to refresh elements list
                     else:
                         # Close menu if no action option was found
                         log_info("No actionable option (Unlike/Delete/Remove) in menu. Skipping row...")
                         page.keyboard.press("Escape")
-                        page.wait_for_timeout(200)
+                        page.wait_for_timeout(300)
                         
                 except Exception as ex:
                     log_error(f"Error handling activity item: {ex}")
