@@ -145,7 +145,14 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         
                     log_info("Opening activity options menu...")
                     btn.click(force=True)
-                    page.wait_for_timeout(300) # Fast menu wait
+                    
+                    # Wait dynamically for the menu to appear
+                    menu_container = page.locator('div[role="menu"], [role="dialog"], [role="presentation"]').first
+                    try:
+                        menu_container.wait_for(state="visible", timeout=1500)
+                    except Exception:
+                        log_warn("Menu overlay did not load in time. Skipping item...")
+                        continue
                     
                     # Search for Unlike, Delete, Remove reaction, Remove tag, or Remove
                     menu_items = [
@@ -157,6 +164,7 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                     ]
                     
                     option_clicked = False
+                    clicked_text = ""
                     for item_text in menu_items:
                         # Find the floating menu option
                         option = page.locator(f'div[role="menuitem"]:has-text("{item_text}"), span:has-text("{item_text}")').first
@@ -164,6 +172,7 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                             log_info(f"Found menu option: '{item_text}'. Clicking it...")
                             option.click(force=True)
                             option_clicked = True
+                            clicked_text = item_text
                             page.wait_for_timeout(500) # Fast confirmation wait
                             break
                             
@@ -178,11 +187,12 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                             
                         deleted_count += 1
                         action_taken_in_this_view = True
-                        log_success(f"Cleaned up activity item #{deleted_count}!")
+                        log_success(f"Action '{clicked_text}' completed successfully for item #{deleted_count}!")
                         page.wait_for_timeout(random.uniform(500, 1000)) # Fast cleanup delay
                         break # Break to refresh elements list
                     else:
                         # Close menu if no action option was found
+                        log_info("No actionable option (Unlike/Delete/Remove) in menu. Skipping row...")
                         page.keyboard.press("Escape")
                         page.wait_for_timeout(200)
                         
