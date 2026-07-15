@@ -149,10 +149,13 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                     # Wait dynamically for the actual menu to appear
                     menu_container = page.locator('div[role="menu"]').first
                     try:
-                        menu_container.wait_for(state="visible", timeout=2000)
+                        menu_container.wait_for(state="visible", timeout=3000)
                     except Exception:
                         log_warn("Menu overlay (div[role='menu']) did not appear. Skipping item...")
                         continue
+                    
+                    # Wait 1.0 second for React event listeners to bind
+                    page.wait_for_timeout(1000)
                     
                     # Search for Unlike, Delete, Remove reaction, Remove tag, or Remove
                     menu_items = [
@@ -170,49 +173,52 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         option = menu_container.locator(f'span:has-text("{item_text}"), div[role="menuitem"]:has-text("{item_text}"), [role="button"]:has-text("{item_text}")').first
                         if option.count() > 0 and option.is_visible():
                             log_info(f"Found menu option: '{item_text}'. Clicking it...")
-                            # Wait 300ms for React event listeners to bind
-                            page.wait_for_timeout(300)
                             option.click() # Standard click (waits for stability)
                             option_clicked = True
                             clicked_text = item_text
                             break
                             
                     if option_clicked:
+                        # Wait 1.0 second after clicking option for action to register or dialog to open
+                        page.wait_for_timeout(1000)
+                        
                         # Handle confirmation dialog if it's a delete action
                         if clicked_text in ["Delete", "Remove", "Remove tag"]:
                             try:
                                 dialog = page.locator('div[role="dialog"]').first
-                                if dialog.wait_for(state="visible", timeout=1500):
-                                    page.wait_for_timeout(300)
+                                if dialog.wait_for(state="visible", timeout=2000):
+                                    page.wait_for_timeout(800) # Wait for dialog buttons to bind
                                     confirm_btn = dialog.locator('div[role="button"]:has-text("Delete"), div[role="button"]:has-text("Remove"), div[role="button"]:has-text("Confirm"), button:has-text("Delete"), button:has-text("Move")').first
                                     if confirm_btn.count() > 0 and confirm_btn.is_visible():
+                                        log_info("Clicking confirmation button in dialog...")
                                         confirm_btn.click()
+                                        page.wait_for_timeout(1000) # Wait after confirming
                             except Exception:
                                 pass # No dialog, maybe instant delete
                         
                         # Wait for the row actions button (btn) to disappear from the page
                         try:
-                            # Wait up to 5 seconds for the row to disappear
-                            btn.wait_for(state="hidden", timeout=5000)
+                            # Wait up to 6 seconds for the row to disappear
+                            btn.wait_for(state="hidden", timeout=6000)
                             deleted_count += 1
                             action_taken_in_this_view = True
                             log_success(f"Action '{clicked_text}' completed: row disappeared! (Item #{deleted_count})")
-                            page.wait_for_timeout(500)
+                            page.wait_for_timeout(random.uniform(1500, 3000)) # Robust delay between items
                             break
                         except Exception:
                             log_warn(f"Row did not disappear after '{clicked_text}' action. Moving on...")
                             page.keyboard.press("Escape")
-                            page.wait_for_timeout(300)
+                            page.wait_for_timeout(500)
                     else:
                         # Close menu if no action option was found
                         log_info("No actionable option (Unlike/Delete/Remove) in menu. Skipping row...")
                         page.keyboard.press("Escape")
-                        page.wait_for_timeout(300)
+                        page.wait_for_timeout(500)
                         
                 except Exception as ex:
                     log_error(f"Error handling activity item: {ex}")
                     page.keyboard.press("Escape")
-                    page.wait_for_timeout(200)
+                    page.wait_for_timeout(500)
                     continue
                     
             if action_taken_in_this_view:
@@ -221,7 +227,7 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                 scroll_attempts_without_actions += 1
                 log_info(f"No actions taken on current view. Scrolling down (attempt {scroll_attempts_without_actions}/{max_scroll_attempts})...")
                 page.evaluate("window.scrollBy(0, 800)")
-                page.wait_for_timeout(1000) # Fast scroll wait
+                page.wait_for_timeout(2000) # Robust scroll wait
                 
         log_success(f"Cleanup finished! Processed {deleted_count} activity items.")
         context.close()
