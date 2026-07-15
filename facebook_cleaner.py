@@ -178,45 +178,31 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                             break
                             
                     if option_clicked:
-                        # Verify the menu closed
-                        try:
-                            menu_container.wait_for(state="hidden", timeout=2000)
-                        except Exception:
-                            log_warn("Menu did not close after clicking option. Escape-closing...")
-                            page.keyboard.press("Escape")
-                        
-                        # Handle confirmation dialog if it's a delete action (flexible check)
-                        success = True
+                        # Handle confirmation dialog if it's a delete action
                         if clicked_text in ["Delete", "Remove", "Remove tag"]:
                             try:
-                                log_info("Checking for confirmation dialog (waiting up to 2 seconds)...")
                                 dialog = page.locator('div[role="dialog"]').first
-                                # Wait up to 2 seconds for a dialog to appear
-                                dialog.wait_for(state="visible", timeout=2000)
-                                
-                                # Dialog appeared! Click confirm.
-                                page.wait_for_timeout(300)
-                                confirm_btn = dialog.locator('div[role="button"]:has-text("Delete"), div[role="button"]:has-text("Remove"), div[role="button"]:has-text("Confirm"), button:has-text("Delete"), button:has-text("Move")').first
-                                if confirm_btn.count() > 0 and confirm_btn.is_visible():
-                                    log_info("Clicking confirmation button in dialog...")
-                                    confirm_btn.click() # Standard click
-                                    dialog.wait_for(state="hidden", timeout=3000)
-                                else:
-                                    log_warn("Could not find the confirmation button in the dialog.")
-                                    success = False
+                                if dialog.wait_for(state="visible", timeout=1500):
+                                    page.wait_for_timeout(300)
+                                    confirm_btn = dialog.locator('div[role="button"]:has-text("Delete"), div[role="button"]:has-text("Remove"), div[role="button"]:has-text("Confirm"), button:has-text("Delete"), button:has-text("Move")').first
+                                    if confirm_btn.count() > 0 and confirm_btn.is_visible():
+                                        confirm_btn.click()
                             except Exception:
-                                # Timeout means no dialog appeared, which is common if Facebook deletes instantly
-                                log_info("No confirmation dialog appeared. Assuming item was deleted instantly.")
-                                success = True
-                                
-                        if success:
+                                pass # No dialog, maybe instant delete
+                        
+                        # Wait for the row actions button (btn) to disappear from the page
+                        try:
+                            # Wait up to 5 seconds for the row to disappear
+                            btn.wait_for(state="hidden", timeout=5000)
                             deleted_count += 1
                             action_taken_in_this_view = True
-                            log_success(f"Action '{clicked_text}' completed successfully for item #{deleted_count}!")
-                            page.wait_for_timeout(random.uniform(1500, 2500)) # Let Facebook process request
-                            break # Break to refresh elements list
-                        else:
-                            log_error(f"Failed to complete action '{clicked_text}' for this item.")
+                            log_success(f"Action '{clicked_text}' completed: row disappeared! (Item #{deleted_count})")
+                            page.wait_for_timeout(500)
+                            break
+                        except Exception:
+                            log_warn(f"Row did not disappear after '{clicked_text}' action. Moving on...")
+                            page.keyboard.press("Escape")
+                            page.wait_for_timeout(300)
                     else:
                         # Close menu if no action option was found
                         log_info("No actionable option (Unlike/Delete/Remove) in menu. Skipping row...")
