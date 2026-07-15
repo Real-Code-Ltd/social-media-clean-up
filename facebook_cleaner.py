@@ -104,96 +104,90 @@ def run_facebook_cleanup(user_data_dir, headless=False):
             context.close()
             return
             
-        # Navigate to Profile
-        log_info("Navigating to your Facebook profile page...")
-        page.goto("https://www.facebook.com/me")
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(3000)
+        # Navigate to Activity Log
+        log_info("Navigating to Facebook Activity Log (Comments and Reactions)...")
+        activity_url = "https://www.facebook.com/me/allactivity/?activity_history=false&category_key=YOURACTIVITYCOMMENTSANDREACTIONSSCHEMA&manage_mode=false&should_load_landing_page=false"
+        page.goto(activity_url)
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_timeout(5000)
         
         deleted_count = 0
         scroll_attempts_without_actions = 0
-        max_scroll_attempts = 10
+        max_scroll_attempts = 15
         
-        log_info("Starting post deletion loop. Press Ctrl+C in terminal to stop.")
+        log_info("Starting post/reaction cleanup loop. Press Ctrl+C in terminal to stop.")
         
         while scroll_attempts_without_actions < max_scroll_attempts:
-            # Find the 'actions' or 'three dots' buttons for the posts.
-            # Facebook usually marks this button with aria-label containing "Actions for this post" or "More options"
-            actions_buttons = page.locator('div[role="button"][aria-label*="Action"], div[role="button"][aria-label*="More"], div[role="button"][aria-label*="options"]').all()
+            # Find the 'actions' or 'three dots' buttons for the items in the main area of the Activity Log.
+            # Usually they are divs with aria-haspopup="menu" or labels containing Action/More.
+            actions_buttons = page.locator('div[role="main"] div[role="button"][aria-haspopup="menu"], div[role="main"] div[role="button"][aria-label*="Action"], div[role="main"] div[role="button"][aria-label*="More"]').all()
             
-            log_info(f"Found {len(actions_buttons)} actions buttons in view.")
+            log_info(f"Found {len(actions_buttons)} activity actions buttons in view.")
             action_taken_in_this_view = False
             
             for btn in actions_buttons:
                 try:
-                    # Scroll button into view and click
                     btn.scroll_into_view_if_needed()
                     
-                    # Make sure the button is actually visible and clickable
                     if not btn.is_visible():
                         continue
                         
-                    btn.click()
-                    page.wait_for_timeout(1500)
+                    log_info("Opening activity options menu...")
+                    btn.click(force=True)
+                    page.wait_for_timeout(1000)
                     
-                    # Now search for "Move to trash", "Delete post", "Move to Archive", or "Delete" menu item
-                    # Facebook's menu items typically are div[role="menuitem"] or contain text
+                    # Search for Unlike, Delete, Remove reaction, Remove tag, or Remove
                     menu_items = [
-                        "Move to trash", 
-                        "Delete post", 
-                        "Move to Archive", 
+                        "Unlike", 
                         "Delete", 
-                        "Remove tag"
+                        "Remove reaction", 
+                        "Remove tag", 
+                        "Remove"
                     ]
                     
                     option_clicked = False
                     for item_text in menu_items:
-                        # Case insensitive or exact match check
+                        # Find the floating menu option
                         option = page.locator(f'div[role="menuitem"]:has-text("{item_text}"), span:has-text("{item_text}")').first
                         if option.count() > 0 and option.is_visible():
-                            log_info(f"Found option: '{item_text}'. Clicking it...")
-                            option.click()
+                            log_info(f"Found menu option: '{item_text}'. Clicking it...")
+                            option.click(force=True)
                             option_clicked = True
                             page.wait_for_timeout(2000)
                             break
                             
                     if option_clicked:
-                        # Now handle the confirmation dialog if it appears.
-                        # Look for buttons in role="dialog" with text containing Move, Delete, Confirm, or Archive
-                        confirm_btn = page.locator('div[role="dialog"] div[role="button"]:has-text("Move"), div[role="dialog"] div[role="button"]:has-text("Delete"), div[role="dialog"] div[role="button"]:has-text("Confirm"), div[role="dialog"] button:has-text("Delete"), div[role="dialog"] button:has-text("Move")').first
+                        # Handle confirmation dialog if it appears (common for deleting comments)
+                        confirm_btn = page.locator('div[role="dialog"] div[role="button"]:has-text("Delete"), div[role="dialog"] div[role="button"]:has-text("Remove"), div[role="dialog"] div[role="button"]:has-text("Confirm"), div[role="dialog"] button:has-text("Delete"), div[role="dialog"] button:has-text("Move")').first
                         
                         if confirm_btn.count() > 0 and confirm_btn.is_visible():
-                            confirm_btn.click()
-                            deleted_count += 1
-                            action_taken_in_this_view = True
-                            log_success(f"Moved post #{deleted_count} to trash/deleted!")
-                            page.wait_for_timeout(random.uniform(3000, 5000))
-                            break # Break to re-evaluate visible posts
-                        else:
-                            log_warn("No confirmation button detected, or the action did not trigger a modal. Continuing...")
-                            action_taken_in_this_view = True
-                            page.keyboard.press("Escape")
-                            page.wait_for_timeout(1000)
-                            break
+                            log_info("Clicking confirmation button in dialog...")
+                            confirm_btn.click(force=True)
+                            page.wait_for_timeout(2000)
+                            
+                        deleted_count += 1
+                        action_taken_in_this_view = True
+                        log_success(f"Cleaned up activity item #{deleted_count}!")
+                        page.wait_for_timeout(random.uniform(2000, 4000))
+                        break # Break to refresh elements list
                     else:
-                        # Close menu if no deletion option was found
-                        log_info("No deletion option found in dropdown. Closing menu...")
+                        # Close menu if no action option was found
                         page.keyboard.press("Escape")
-                        page.wait_for_timeout(1000)
+                        page.wait_for_timeout(500)
                         
                 except Exception as ex:
-                    log_error(f"Error handling Facebook post actions: {ex}")
+                    log_error(f"Error handling activity item: {ex}")
                     page.keyboard.press("Escape")
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(500)
                     continue
                     
             if action_taken_in_this_view:
                 scroll_attempts_without_actions = 0
             else:
                 scroll_attempts_without_actions += 1
-                log_info(f"No actions taken on current page. Scrolling down (attempt {scroll_attempts_without_actions}/{max_scroll_attempts})...")
-                page.evaluate("window.scrollBy(0, 1000)")
+                log_info(f"No actions taken on current view. Scrolling down (attempt {scroll_attempts_without_actions}/{max_scroll_attempts})...")
+                page.evaluate("window.scrollBy(0, 800)")
                 page.wait_for_timeout(3000)
                 
-        log_success(f"Cleanup finished! Moved {deleted_count} posts to trash/deleted.")
+        log_success(f"Cleanup finished! Processed {deleted_count} activity items.")
         context.close()
