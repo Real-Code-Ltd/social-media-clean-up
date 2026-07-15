@@ -77,7 +77,8 @@ def run_twitter_cleanup(user_data_dir, headless=False):
         context = p.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
             headless=headless,
-            args=["--start-maximized"],
+            args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
+            ignore_default_args=["--enable-automation"],
             no_viewport=True
         )
         

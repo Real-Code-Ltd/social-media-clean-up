@@ -75,7 +75,8 @@ def run_facebook_cleanup(user_data_dir, headless=False):
         context = p.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
             headless=headless,
-            args=["--start-maximized", "--disable-notifications"],
+            args=["--start-maximized", "--disable-notifications", "--disable-blink-features=AutomationControlled"],
+            ignore_default_args=["--enable-automation"],
             no_viewport=True
         )
         
