@@ -1,0 +1,29 @@
+# Playwright session and profile data (contains cookies, local storage, credentials)
+.user_data/
+
+# JSON files (contains potentially sensitive data or configuration)
+*.json
+
+# Python caching and byte-code
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Editor files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

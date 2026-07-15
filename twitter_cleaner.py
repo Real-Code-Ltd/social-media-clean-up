@@ -1,0 +1,223 @@
+import time
+import random
+from playwright.sync_api import sync_playwright
+from colorama import Fore, Style, init
+
+# Initialize colorama
+init(autoreset=True)
+
+def log_success(msg):
+    print(f"{Fore.GREEN}[SUCCESS] {msg}{Style.RESET_ALL}")
+
+def log_info(msg):
+    print(f"{Fore.BLUE}[INFO] {msg}{Style.RESET_ALL}")
+
+def log_warn(msg):
+    print(f"{Fore.YELLOW}[WARN] {msg}{Style.RESET_ALL}")
+
+def log_error(msg):
+    print(f"{Fore.RED}[ERROR] {msg}{Style.RESET_ALL}")
+
+def check_login(page):
+    """
+    Checks if the user is currently logged in on Twitter/X.
+    Returns True if logged in, False otherwise.
+    """
+    try:
+        # A logged-in session should show the navigation sidebar with a Profile link,
+        # or the tweet compose button (aria-label="Post" or data-testid="SideNav_NewTweet_Button")
+        page.wait_for_timeout(3000)
+        profile_btn = page.locator('[aria-label="Profile"]')
+        compose_btn = page.locator('[data-testid="SideNav_NewTweet_Button"]')
+        
+        if profile_btn.count() > 0 or compose_btn.count() > 0:
+            return True
+        return False
+    except Exception:
+        return False
+
+def wait_for_user_login(page):
+    """
+    Prompts the user to log in if they are not already logged in.
+    """
+    log_info("Navigating to https://x.com/ ...")
+    page.goto("https://x.com/")
+    
+    if check_login(page):
+        log_success("Logged in automatically via saved session!")
+        return True
+    
+    log_warn("No active session found. Please log in manually in the browser window.")
+    log_info("Once you are logged in and see your home timeline, return here and press ENTER to continue...")
+    
+    # Wait for the user to log in. We will check in a loop every 3 seconds,
+    # or they can press Enter. We'll combine both: if they log in, we auto-proceed.
+    for i in range(100): # 5 minutes max auto-check
+        if check_login(page):
+            log_success("Login detected! Proceeding...")
+            return True
+        page.wait_for_timeout(3000)
+    
+    input("Press Enter to verify login and continue...")
+    if check_login(page):
+        log_success("Login verified!")
+        return True
+    else:
+        log_error("Could not verify login. Please try again.")
+        return False
+
+def run_twitter_cleanup(user_data_dir, headless=False):
+    """
+    Runs the Twitter/X cleanup automation.
+    """
+    log_info("Starting Twitter/X cleanup workflow...")
+    
+    with sync_playwright() as p:
+        log_info(f"Launching browser with profile data directory: {user_data_dir}")
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=user_data_dir,
+            headless=headless,
+            args=["--start-maximized"],
+            no_viewport=True
+        )
+        
+        # Open main page
+        page = context.pages[0] if context.pages else context.new_page()
+        
+        # Handle login
+        if not wait_for_user_login(page):
+            context.close()
+            return
+        
+        # Navigate to Profile
+        log_info("Navigating to your profile page...")
+        try:
+            profile_btn = page.locator('[aria-label="Profile"]')
+            profile_btn.click()
+            page.wait_for_load_state("networkidle")
+            log_success("Successfully navigated to Profile!")
+        except Exception as e:
+            log_warn(f"Could not click profile button on sidebar: {e}. Attempting direct navigation to profile...")
+            # We can find the profile handle by hovering/checking sidebar profile details, or navigate to https://x.com/profile which redirects
+            page.goto("https://x.com/profile")
+            page.wait_for_load_state("networkidle")
+            
+        page.wait_for_timeout(3000)
+        
+        deleted_count = 0
+        reposts_undone_count = 0
+        scroll_attempts_without_actions = 0
+        max_scroll_attempts = 10
+        
+        log_info("Starting post deletion loop. Press Ctrl+C in terminal to stop.")
+        
+        while scroll_attempts_without_actions < max_scroll_attempts:
+            # Find all tweet elements on the page
+            tweets = page.locator('article[data-testid="tweet"]').all()
+            log_info(f"Found {len(tweets)} tweets in view.")
+            
+            action_taken_in_this_view = False
+            
+            for tweet in tweets:
+                try:
+                    # Let's check if this is a Repost or our own Tweet.
+                    # Retweets often have data-testid="socialContext" saying "You reposted"
+                    social_context = tweet.locator('[data-testid="socialContext"]')
+                    is_repost = False
+                    if social_context.count() > 0:
+                        text = social_context.first.inner_text().lower()
+                        if "reposted" in text or "retweeted" in text:
+                            is_repost = True
+                    
+                    # Also check if there is an active 'unretweet' button.
+                    # If it's a repost, we undo it.
+                    unretweet_btn = tweet.locator('[data-testid="unretweet"]')
+                    if unretweet_btn.count() > 0 or is_repost:
+                        # Highlight the repost to show what we are doing
+                        tweet.scroll_into_view_if_needed()
+                        log_info("Found repost. Undoing repost...")
+                        
+                        btn_to_click = unretweet_btn.first if unretweet_btn.count() > 0 else tweet.locator('[data-testid="retweet"]').first
+                        btn_to_click.click()
+                        page.wait_for_timeout(1000)
+                        
+                        # A pop-up menu appears with "Undo Repost" or "Undo Repost"
+                        # Standard dropdown elements are role="menuitem"
+                        undo_btn = page.locator('[role="menuitem"]:has-text("Undo Repost")').first
+                        if undo_btn.count() == 0:
+                            undo_btn = page.locator('[role="menuitem"]:has-text("Undo repost")').first
+                        if undo_btn.count() == 0:
+                            undo_btn = page.locator('span:has-text("Undo Repost")').first
+                        if undo_btn.count() == 0:
+                            undo_btn = page.locator('span:has-text("Undo repost")').first
+                            
+                        if undo_btn.count() > 0:
+                            undo_btn.click()
+                            reposts_undone_count += 1
+                            action_taken_in_this_view = True
+                            log_success(f"Undone repost #{reposts_undone_count}!")
+                            page.wait_for_timeout(random.uniform(2000, 4000))
+                            break # Break out of inner loop to refresh tweets list and avoid stale element reference
+                        else:
+                            log_warn("Could not find 'Undo Repost' button in dropdown menu.")
+                            # Press escape to close menu
+                            page.keyboard.press("Escape")
+                            page.wait_for_timeout(500)
+                            
+                    # Otherwise, it's our own post. Let's delete it.
+                    caret_btn = tweet.locator('[data-testid="caret"]')
+                    if caret_btn.count() > 0:
+                        # Scroll to the tweet
+                        tweet.scroll_into_view_if_needed()
+                        log_info("Deleting own tweet...")
+                        caret_btn.first.click()
+                        page.wait_for_timeout(1000)
+                        
+                        # Look for "Delete" menuitem
+                        delete_btn = page.locator('[role="menuitem"]:has-text("Delete")').first
+                        if delete_btn.count() == 0:
+                            delete_btn = page.locator('span:has-text("Delete")').first
+                            
+                        if delete_btn.count() > 0:
+                            delete_btn.click()
+                            page.wait_for_timeout(1000)
+                            
+                            # Confirmation popup
+                            confirm_btn = page.locator('[data-testid="confirmationSheetConfirm"]').first
+                            if confirm_btn.count() == 0:
+                                confirm_btn = page.locator('button:has-text("Delete")').first
+                                
+                            if confirm_btn.count() > 0:
+                                confirm_btn.click()
+                                deleted_count += 1
+                                action_taken_in_this_view = True
+                                log_success(f"Deleted tweet #{deleted_count}!")
+                                page.wait_for_timeout(random.uniform(2500, 4500))
+                                break # Break to refresh tweets list
+                            else:
+                                log_warn("Could not find 'Delete' confirmation button in modal.")
+                                page.keyboard.press("Escape")
+                                page.wait_for_timeout(500)
+                        else:
+                            log_info("Menu item 'Delete' not found (this tweet might not belong to you). Closing menu...")
+                            page.keyboard.press("Escape")
+                            page.wait_for_timeout(500)
+                except Exception as ex:
+                    log_error(f"Error handling tweet: {ex}")
+                    # Try to hit Escape to dismiss any open dropdowns or overlays
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(1000)
+                    continue
+            
+            if action_taken_in_this_view:
+                # Reset scroll attempts since we successfully acted on a post
+                scroll_attempts_without_actions = 0
+            else:
+                # Scroll down to load more tweets
+                scroll_attempts_without_actions += 1
+                log_info(f"No actions taken on current page. Scrolling down (attempt {scroll_attempts_without_actions}/{max_scroll_attempts})...")
+                page.evaluate("window.scrollBy(0, 1000)")
+                page.wait_for_timeout(3000)
+        
+        log_success(f"Cleanup finished! Deleted: {deleted_count} tweets, Undone: {reposts_undone_count} reposts.")
+        context.close()
