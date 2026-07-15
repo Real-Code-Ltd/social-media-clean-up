@@ -108,18 +108,74 @@ def run_twitter_cleanup(user_data_dir, headless=False):
         
         # Navigate to Profile
         log_info("Navigating to your profile page...")
-        try:
-            page.goto("https://x.com/profile")
-            page.wait_for_load_state("domcontentloaded")
-            log_success("Successfully loaded profile redirects!")
+        navigated = False
+        
+        # 1. Attempt to extract username from the sidebar Profile link's href
+        for attempt in range(5):
+            try:
+                profile_link = page.locator('[aria-label="Profile"]').first
+                if profile_link.count() > 0:
+                    href = profile_link.get_attribute("href")
+                    if href and href != "/profile" and href != "/":
+                        profile_url = f"https://x.com{href}"
+                        log_info(f"Detected profile handle from sidebar: {href}. Navigating directly...")
+                        page.goto(profile_url)
+                        page.wait_for_load_state("domcontentloaded")
+                        navigated = True
+                        break
+            except Exception:
+                pass
+            page.wait_for_timeout(1000)
             
-            # Dismiss cookie consent banner if present
+        # 2. Fallback: Try to click the Profile button and wait for redirect
+        if not navigated:
+            try:
+                log_info("Clicking the Profile sidebar button...")
+                profile_btn = page.locator('[aria-label="Profile"]').first
+                if profile_btn.count() > 0:
+                    profile_btn.click(force=True)
+                    page.wait_for_load_state("domcontentloaded")
+                    # Wait up to 5 seconds to see if URL updates to your handle
+                    for _ in range(10):
+                        if "/profile" not in page.url and "/home" not in page.url:
+                            log_success(f"Successfully redirected to: {page.url}")
+                            navigated = True
+                            break
+                        page.wait_for_timeout(500)
+            except Exception as e:
+                log_warn(f"Could not click profile button: {e}")
+                
+        # 3. Last fallback: Navigate to /profile directly
+        if not navigated:
+            try:
+                log_info("Navigating to https://x.com/profile ...")
+                page.goto("https://x.com/profile")
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(3000)
+                # Check one last time if we can resolve the handle from here
+                profile_link = page.locator('[aria-label="Profile"]').first
+                if profile_link.count() > 0:
+                    href = profile_link.get_attribute("href")
+                    if href and href != "/profile" and href != "/":
+                        page.goto(f"https://x.com{href}")
+                        page.wait_for_load_state("domcontentloaded")
+                        navigated = True
+            except Exception as e:
+                log_error(f"Fallback navigation failed: {e}")
+                
+        if navigated:
+            log_success("Successfully navigated to your profile!")
+        else:
+            log_warn("Profile page detection incomplete. Starting deletion loop anyway...")
+            
+        # Dismiss cookie consent banner if present
+        try:
             cookie_btn = page.locator('button:has-text("Refuse non-essential cookies"), button:has-text("Refuse optional cookies"), button:has-text("Close"), [aria-label="Close"]').first
             if cookie_btn.count() > 0 and cookie_btn.is_visible():
                 log_info("Dismissing cookie consent banner...")
                 cookie_btn.click(force=True, timeout=3000)
-        except Exception as e:
-            log_warn(f"Navigation warning: {e}. Proceeding anyway...")
+        except Exception:
+            pass
             
         page.wait_for_timeout(3000)
         
