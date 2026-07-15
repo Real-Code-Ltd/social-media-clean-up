@@ -169,10 +169,16 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                     option_clicked = False
                     clicked_text = ""
                     for item_text in menu_items:
-                        # Find the option ONLY inside the menu container
-                        option = menu_container.locator(f'span:has-text("{item_text}"), div[role="menuitem"]:has-text("{item_text}"), [role="button"]:has-text("{item_text}")').first
+                        # Target the actual menuitem or button container containing the text
+                        option = menu_container.locator(f'[role="menuitem"]:has-text("{item_text}"), [role="button"]:has-text("{item_text}"), div[role="menuitem"] :has-text("{item_text}")').first
+                        if option.count() == 0:
+                            # Fallback to direct text match
+                            option = menu_container.locator(f'span:has-text("{item_text}"), div:has-text("{item_text}")').first
+                            
                         if option.count() > 0 and option.is_visible():
                             log_info(f"Found menu option: '{item_text}'. Clicking it...")
+                            option.scroll_into_view_if_needed()
+                            page.wait_for_timeout(500) # Wait 500ms for event listeners to bind
                             option.click() # Standard click (waits for stability)
                             option_clicked = True
                             clicked_text = item_text
@@ -183,8 +189,8 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         if clicked_text in ["Delete", "Remove", "Remove tag"]:
                             try:
                                 dialog = page.locator('div[role="dialog"]').first
-                                if dialog.wait_for(state="visible", timeout=1500):
-                                    page.wait_for_timeout(200)
+                                if dialog.wait_for(state="visible", timeout=2000):
+                                    page.wait_for_timeout(500)
                                     confirm_btn = dialog.locator('div[role="button"]:has-text("Delete"), div[role="button"]:has-text("Remove"), div[role="button"]:has-text("Confirm"), button:has-text("Delete"), button:has-text("Move")').first
                                     if confirm_btn.count() > 0 and confirm_btn.is_visible():
                                         log_info("Clicking confirmation button in dialog...")
@@ -194,17 +200,17 @@ def run_facebook_cleanup(user_data_dir, headless=False):
                         
                         # Wait for the row actions button (btn) to disappear from the page
                         try:
-                            # Wait up to 3 seconds for the row to disappear (DOM updates are fast)
-                            btn.wait_for(state="hidden", timeout=3000)
+                            # Wait up to 10 seconds for the row to disappear (DOM updates can be slow)
+                            btn.wait_for(state="hidden", timeout=10000)
                             deleted_count += 1
                             action_taken_in_this_view = True
                             log_success(f"Action '{clicked_text}' completed: row disappeared! (Item #{deleted_count})")
-                            page.wait_for_timeout(random.uniform(500, 1500)) # Pacing delay
+                            page.wait_for_timeout(1000) # Brief pause before next item
                             break
                         except Exception:
                             log_warn(f"Row did not disappear after '{clicked_text}' action. Moving on...")
                             page.keyboard.press("Escape")
-                            page.wait_for_timeout(300)
+                            page.wait_for_timeout(500)
                     else:
                         # Close menu if no action option was found
                         log_info("No actionable option (Unlike/Delete/Remove) in menu. Skipping row...")
