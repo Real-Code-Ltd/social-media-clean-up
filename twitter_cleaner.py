@@ -109,6 +109,7 @@ def run_twitter_cleanup(user_data_dir, headless=False):
         # Navigate to Profile
         log_info("Navigating to your profile page...")
         navigated = False
+        profile_url = None
         
         # 1. Attempt to extract username from the sidebar Profile link's href
         for attempt in range(5):
@@ -139,6 +140,7 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                     for _ in range(10):
                         if "/profile" not in page.url and "/home" not in page.url:
                             log_success(f"Successfully redirected to: {page.url}")
+                            profile_url = page.url
                             navigated = True
                             break
                         page.wait_for_timeout(500)
@@ -157,7 +159,8 @@ def run_twitter_cleanup(user_data_dir, headless=False):
                 if profile_link.count() > 0:
                     href = profile_link.get_attribute("href")
                     if href and href != "/profile" and href != "/":
-                        page.goto(f"https://x.com{href}")
+                        profile_url = f"https://x.com{href}"
+                        page.goto(profile_url)
                         page.wait_for_load_state("domcontentloaded")
                         navigated = True
             except Exception as e:
@@ -187,6 +190,15 @@ def run_twitter_cleanup(user_data_dir, headless=False):
         log_info("Starting post deletion loop. Press Ctrl+C in terminal to stop.")
         
         while scroll_attempts_without_actions < max_scroll_attempts:
+            # If we navigated away to explore or home, return back to the profile page
+            if "/explore" in page.url or "/home" in page.url or page.url.endswith("x.com/") or page.url.endswith("twitter.com/"):
+                if profile_url:
+                    log_warn(f"Navigated away to {page.url}. Returning to profile: {profile_url}...")
+                    page.goto(profile_url)
+                    page.wait_for_load_state("domcontentloaded")
+                    page.wait_for_timeout(3000)
+                    continue
+                    
             # Find all tweet elements on the page, excluding already processed ones
             tweets = page.locator('article[data-testid="tweet"]:not([data-cleanup-processed="true"])').all()
             log_info(f"Found {len(tweets)} unprocessed tweets in view.")
