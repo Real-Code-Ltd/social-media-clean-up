@@ -5,7 +5,7 @@ from colorama import Fore, Style, init
 # Add local path to import configs and modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config import TWITTER_USER_DATA, FACEBOOK_USER_DATA
+from config import TWITTER_USER_DATA, FACEBOOK_USER_DATA, DEFAULT_MIN_DELAY, DEFAULT_MAX_DELAY
 from twitter_cleaner import run_twitter_cleanup
 from facebook_cleaner import run_facebook_cleanup
 
@@ -23,28 +23,72 @@ def print_banner():
 """
     print(banner)
 
+def prompt_pacing_selection():
+    print(f"\n{Fore.WHITE}Select cleanup speed:")
+    print(f"  {Fore.GREEN}1. Safe & Steady (2.5 - 4.5s delay)")
+    print(f"  {Fore.GREEN}2. Moderate (1.5 - 2.5s delay - Default)")
+    print(f"  {Fore.GREEN}3. Custom delay")
+    
+    speed_choice = input(f"{Fore.WHITE}Enter speed selection (1, 2, or 3) [Default: 2]: ").strip()
+    
+    if speed_choice == "1":
+        return 2.5, 4.5
+    elif speed_choice == "3":
+        try:
+            custom_min = float(input("Enter minimum delay in seconds (e.g. 3.0): ").strip())
+            custom_max = float(input("Enter maximum delay in seconds (e.g. 5.0): ").strip())
+            if custom_min > 0 and custom_max >= custom_min:
+                return custom_min, custom_max
+            else:
+                print(f"{Fore.YELLOW}Invalid range. Using default Moderate delay ({DEFAULT_MIN_DELAY} - {DEFAULT_MAX_DELAY}s).")
+        except ValueError:
+            print(f"{Fore.YELLOW}Invalid input. Using default Moderate delay ({DEFAULT_MIN_DELAY} - {DEFAULT_MAX_DELAY}s).")
+            
+    return 1.5, 2.5
+
+def prompt_twitter_activity():
+    print(f"\n{Fore.WHITE}Select Twitter activity to clean:")
+    print(f"  {Fore.GREEN}1. All Activity (Posts, Replies, Reposts & Likes) [Default]")
+    print(f"  {Fore.GREEN}2. Posts, Replies & Reposts only")
+    print(f"  {Fore.GREEN}3. Likes / Hearts only (Un-heart all liked posts)")
+    
+    act_choice = input(f"{Fore.WHITE}Enter activity selection (1, 2, or 3) [Default: 1]: ").strip()
+    if act_choice == "2":
+        return "posts"
+    elif act_choice == "3":
+        return "likes"
+    return "all"
+
 def main():
     print_banner()
     
     while True:
         print(f"{Fore.WHITE}Please select a social media channel to clean up:")
-        print(f"  {Fore.GREEN}1. Twitter / X")
+        print(f"  {Fore.GREEN}1. Twitter / X [Default]")
         print(f"  {Fore.GREEN}2. Facebook")
         print(f"  {Fore.RED}3. Exit")
         
-        choice = input(f"\n{Fore.WHITE}Enter selection (1, 2, or 3): ").strip()
+        choice = input(f"\n{Fore.WHITE}Enter selection (1, 2, or 3) [Default: 1]: ").strip()
+        if not choice:
+            choice = "1"
         
         if choice == "1":
             print(f"\n{Fore.YELLOW}Selected: Twitter / X")
             headless_input = input("Run in headless mode? (y/N) (Default: N - recommended to see browser): ").strip().lower()
             headless = True if headless_input == 'y' else False
             
+            mode = prompt_twitter_activity()
+            min_delay, max_delay = prompt_pacing_selection()
+            
             try:
-                run_twitter_cleanup(TWITTER_USER_DATA, headless=headless)
+                run_twitter_cleanup(TWITTER_USER_DATA, headless=headless, min_delay=min_delay, max_delay=max_delay, mode=mode)
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}Script terminated by user.")
             except Exception as e:
-                print(f"\n{Fore.RED}An error occurred: {e}")
+                if "closed" in str(e).lower():
+                    print(f"\n{Fore.CYAN}Browser window closed. Cleanup ended.")
+                else:
+                    print(f"\n{Fore.RED}An error occurred: {e}")
             break
             
         elif choice == "2":
@@ -52,8 +96,10 @@ def main():
             headless_input = input("Run in headless mode? (y/N) (Default: N - recommended to see browser): ").strip().lower()
             headless = True if headless_input == 'y' else False
             
+            min_delay, max_delay = prompt_pacing_selection()
+            
             try:
-                run_facebook_cleanup(FACEBOOK_USER_DATA, headless=headless)
+                run_facebook_cleanup(FACEBOOK_USER_DATA, headless=headless, min_delay=min_delay, max_delay=max_delay)
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}Script terminated by user.")
             except Exception as e:
