@@ -4,69 +4,98 @@
 [![Playwright](https://img.shields.io/badge/playwright-v1.40%2B-green.svg)](https://playwright.dev/python/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An automated, privacy-first command-line tool to sweep away your past post history on **Twitter (X)** and **Facebook**. Take control of your digital footprint, clean up your profile, and start fresh! 🚀
+An automated, privacy-first command-line tool to sweep away your past post history, replies, and likes on **Twitter (X)** and **Facebook**. Take control of your digital footprint, clean up your profile, and start fresh! 🚀
 
 ---
 
 ## 🌟 Key Features
 
-*   **Dual Platform Support**: Clean up both **Twitter/X** (tweets and reposts) and **Facebook** posts.
-*   **One-Time Sign In**: Uses a secure local persistent browser profile. You only log in once; future runs bypass authentication automatically!
-*   **Local & Secure**: Absolutely zero database connections or remote servers. All your cookies and credentials remain 100% on your machine.
-*   **Human-Like Interaction**: Incorporates random pacing (2–5 seconds delay) and real-time scrolling to prevent accounts from getting flagged or rate-limited.
-*   **Vibrant Terminal Feedback**: Interactive CLI with color-coded status messages so you know exactly what the automation is doing.
+*   **⚡ Multi-Tab Concurrent Engine (New!)**:
+    *   **Tab 1 `[POSTS]`**: Targets your main profile timeline (`https://x.com/your_handle`) to delete all your primary posts (tested on profiles with 4,000+ historical posts).
+    *   **Tab 2 `[REPLIES]`**: Deletes your conversation replies and comments in other users' threads (`/with_replies`).
+    *   **Tab 3 `[LIKES]`**: Un-hearts all your liked posts on your likes timeline (`/i/history/likes`).
+    *   All 3 tabs run simultaneously side-by-side in the same browser session to dramatically accelerate cleanup.
+*   **❤️ Complete Likes & Hearts Removal**: Automatically removes all your past likes/hearts without confirmation fatigue.
+*   **⏱️ 2-Minute Sticking Safeguard**: Every 2 minutes, the active tabs automatically refresh to flush browser memory leaks, clear virtualized timeline sticking, and ensure steady progress through massive post histories.
+*   **🛡️ Human-Like Pacing & Anti-Detection**:
+    *   **Safe & Steady**: 2.5s – 4.5s delay between actions.
+    *   **Moderate [Default]**: 1.5s – 2.5s delay between actions.
+    *   **Custom**: User-defined minimum and maximum delay.
+*   **🔐 One-Time Sign In**: Uses Playwright's local persistent browser profile. You only log in once in the visible browser; future runs remember your session automatically!
+*   **🎨 Vibrant Color-Coded Terminal Dashboard**: Real-time terminal feedback color-coded per stream:
+    *   `[POSTS]` in Green
+    *   `[REPLIES]` in Cyan
+    *   `[LIKES]` in Magenta
+*   **📘 Dual Platform Support**: Full support for both **Twitter / X** and **Facebook**.
 
 ---
 
-## 🔒 Security Design (Local & Private)
+## 🔒 Security & Privacy (Safe for Public Repositories)
 
-Your privacy is the highest priority. Unlike third-party social media cleanup services:
-*   **No API Tokens Required**: You don't need to register developer accounts or grant broad API permissions.
-*   **Local Browser Profile Storage**: Credentials and session states (cookies, local storage, etc.) are saved directly on your computer inside the `.user_data/` directory.
-*   **No Third-Party Access**: The script never transmits your login information or data to any external server. 
-*   **Safe Execution**: Run in headful mode to watch exactly what the script is doing and verify that it only interacts with the delete options.
+Your security and privacy are 100% protected:
+*   **Zero Remote Servers**: No database connections, telemetry, external analytics, or cloud APIs. Everything runs strictly on your local machine.
+*   **No API Tokens Required**: You do not need to register developer accounts or grant broad third-party OAuth app permissions.
+*   **Strictly Ignored Session Data**: All session cookies, tokens, and browser profiles are stored locally inside the `.user_data/` directory, which is permanently excluded via `.gitignore`.
+*   **Audit Verified**: The repository contains zero hardcoded credentials, usernames, passwords, or session tokens, making it completely safe to be public.
 
 ---
 
 ## 🛠️ Technology Stack
 
-*   **Python 3**: The core application logic.
-*   **Playwright (Python)**: High-performance browser automation library. It runs a chromium instance to interact with the web elements just like a human would.
-*   **Colorama**: Python library to colorize terminal text, providing clear visual progress indicators (`[SUCCESS]`, `[INFO]`, `[WARN]`, `[ERROR]`).
+*   **Python 3.8+**: Application logic and asynchronous concurrency (`asyncio`).
+*   **Playwright (Python)**: High-performance browser automation driving Chromium / Google Chrome with native multi-tab support.
+*   **Colorama**: Terminal styling and color-coded status reporting.
 
 ---
 
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
-Make sure you have Python installed, then clone the repository:
+Ensure you have Python 3.8 or higher installed, then clone the repository:
 ```bash
 git clone https://github.com/Real-Code-Ltd/social-media-clean-up.git
 cd social-media-clean-up
 ```
 
 ### 2. Install Dependencies
-Install the required packages and setup the Playwright browser:
+Install the required packages and install the Playwright browser binaries:
 ```bash
 pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
 ### 3. Usage
-Run the main script and follow the on-screen menu:
+Run the tool directly from your terminal:
 ```bash
 python main.py
 ```
 
-### 4. Interactive Flow
-1.  **Select the channel** to clean up:
-    *   `1` for Twitter/X
-    *   `2` for Facebook
-2.  Choose whether to run in **headless mode** (running in the background). *Note: The first time you run the tool for a platform, choose `N` (headful mode) to open the browser window and log in manually.*
-3.  Sign in to your account. The automation will pause and wait. Once signed in, it will automatically navigate to your profile and begin the cleanup process!
-4.  Press `Ctrl+C` in your terminal at any time to pause or stop the deletion loop.
+---
+
+## 🎮 Interactive Menu Flow
+
+When launched, the interactive CLI allows you to press <kbd>Enter</kbd> to accept recommended defaults or customize your cleanup:
+
+1.  **Select Channel** `[Default: 1 - Twitter / X]`:
+    *   `1. Twitter / X`
+    *   `2. Facebook`
+    *   `3. Exit`
+2.  **Headless Mode** `[Default: N - Visible Browser]`:
+    *   `N` (Recommended): Keeps the browser visible so you can watch the automation in real time.
+    *   `y`: Runs silently in the background.
+3.  **Activity Mode (Twitter/X)** `[Default: 1 - All Activity Multi-Tab]`:
+    *   `1. All Activity [Multi-Tab: 3 Concurrent Tabs]`: Main profile posts, thread replies, and likes all cleaned together.
+    *   `2. Main Profile Posts only [1 Tab]`: Targets only your main profile posts (`https://x.com/your_handle`).
+    *   `3. Posts & Replies [Multi-Tab: 2 Concurrent Tabs]`: Cleans all tweets and thread replies.
+    *   `4. Likes / Hearts only [1 Tab]`: Cleans only your likes/hearts history.
+4.  **Speed Selection** `[Default: 2 - Moderate]`:
+    *   `1. Safe & Steady` (2.5s – 4.5s delay)
+    *   `2. Moderate` (1.5s – 2.5s delay)
+    *   `3. Custom Delay` (specify min/max seconds)
+
+> **Tip**: Press <kbd>Ctrl+C</kbd> in your terminal at any time to pause or stop the cleanup loop safely.
 
 ---
 
 ## 📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

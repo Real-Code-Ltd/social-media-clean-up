@@ -48,10 +48,10 @@ def prompt_pacing_selection():
 
 def prompt_twitter_activity():
     print(f"\n{Fore.WHITE}Select Twitter activity to clean:")
-    print(f"  {Fore.GREEN}1. All Activity (Main Profile Posts, Replies & Likes) [Default]")
-    print(f"  {Fore.GREEN}2. Main Profile Posts only (Your profile posts from https://x.com/your_handle)")
-    print(f"  {Fore.GREEN}3. Main Posts & Replies (All tweets and thread replies)")
-    print(f"  {Fore.GREEN}4. Likes / Hearts only (Un-heart all liked posts)")
+    print(f"  {Fore.GREEN}1. All Activity [Multi-Tab: 3 Concurrent Tabs] (Posts, Replies & Likes) [Default]")
+    print(f"  {Fore.GREEN}2. Main Profile Posts only [1 Tab] (Your profile posts from https://x.com/your_handle)")
+    print(f"  {Fore.GREEN}3. Posts & Replies [Multi-Tab: 2 Concurrent Tabs] (Main posts and thread replies)")
+    print(f"  {Fore.GREEN}4. Likes / Hearts only [1 Tab] (Un-heart all liked posts)")
     
     act_choice = input(f"{Fore.WHITE}Enter activity selection (1, 2, 3, or 4) [Default: 1]: ").strip()
     if act_choice == "2":
