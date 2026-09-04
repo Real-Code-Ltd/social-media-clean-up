@@ -157,6 +157,80 @@ async def reload_twitter_page(page, tag, color):
         log_warn(f"[{tag}] Reload encountered an issue: {ref_err}")
         return True
 
+# --- Rate Limit Management (Shared across concurrent tabs) ---
+_rate_limit_reset_time = 0.0
+_rate_limit_lock = asyncio.Lock()
+
+def trigger_rate_limit(endpoint_name, reset_timestamp=None, retry_after=None, tag="CLEANUP"):
+    """
+    Called whenever Twitter responds with HTTP 429 Rate Limit Exceeded.
+    Sets the global rate limit cooldown timestamp and alerts the user.
+    """
+    global _rate_limit_reset_time
+    now = time.time()
+    reset_epoch = None
+    if reset_timestamp:
+        try:
+            val = float(reset_timestamp)
+            if val > now:
+                reset_epoch = val + 5  # 5s safety buffer
+        except Exception:
+            pass
+    if not reset_epoch and retry_after:
+        try:
+            val = float(retry_after)
+            if val > 0:
+                reset_epoch = now + val + 5
+        except Exception:
+            pass
+    if not reset_epoch:
+        # Standard Twitter GraphQL mutation limit window is 15 minutes (900 seconds)
+        reset_epoch = now + 900
+
+    if reset_epoch > _rate_limit_reset_time:
+        _rate_limit_reset_time = reset_epoch
+        wait_secs = int(_rate_limit_reset_time - now)
+        mins = wait_secs // 60
+        secs = wait_secs % 60
+        reset_clock = time.strftime("%H:%M:%S", time.localtime(_rate_limit_reset_time))
+        print(f"\n{Fore.YELLOW}{Style.BRIGHT}{'='*75}")
+        print(f"⚠️  [RATE LIMIT DETECTED] Twitter temporarily throttled {endpoint_name} (HTTP 429).")
+        print(f"   You've deleted a large batch of posts! Twitter limits deletions per 15-minute window.")
+        print(f"   ⏳ Pausing worker for ~{mins}m {secs:02d}s (Resets at approx {reset_clock}).")
+        print(f"   Worker will automatically resume deletion as soon as the limit resets.")
+        print(f"   (Press Ctrl+C in terminal if you prefer to stop for today and resume later)")
+        print(f"{'='*75}{Style.RESET_ALL}\n")
+
+async def check_and_wait_for_rate_limit(tag, color):
+    """
+    Checks if Twitter's rate limit cooldown is active.
+    If active, pauses execution with a real-time countdown until the window resets.
+    Returns True if a cooldown was observed and waited through.
+    """
+    global _rate_limit_reset_time
+    now = time.time()
+    if _rate_limit_reset_time > now:
+        async with _rate_limit_lock:
+            now = time.time()
+            if _rate_limit_reset_time > now:
+                last_announce = 0
+                while time.time() < _rate_limit_reset_time:
+                    remaining = int(_rate_limit_reset_time - time.time())
+                    if remaining <= 0:
+                        break
+                    if time.time() - last_announce >= 30 or last_announce == 0:
+                        mins = remaining // 60
+                        secs = remaining % 60
+                        print(f"{Fore.YELLOW}[RATE LIMIT] [{tag}] Sleeping... {mins}m {secs:02d}s remaining until auto-resume.{Style.RESET_ALL}")
+                        last_announce = time.time()
+                    sleep_time = min(remaining, 5)
+                    await asyncio.sleep(sleep_time)
+                print(f"\n{Fore.GREEN}{Style.BRIGHT}[RATE LIMIT] Cooldown window expired! Refreshing tabs and resuming cleanup...{Style.RESET_ALL}\n")
+                _rate_limit_reset_time = 0.0
+                return True
+        return True
+    return False
+
 async def delete_tweet_via_api(page, tweet_id, tag, color):
     """
     Executes an authenticated DeleteTweet GraphQL call directly inside
@@ -186,8 +260,18 @@ async def delete_tweet_via_api(page, tweet_id, tag, color):
                     body: JSON.stringify(payload),
                     credentials: 'include'
                 });
-                const data = await resp.json();
-                return { status: resp.status, data: data };
+                const status = resp.status;
+                let data = null;
+                try {
+                    data = await resp.json();
+                } catch (e) {
+                    try {
+                        data = { text: await resp.text() };
+                    } catch (e2) {}
+                }
+                const rateLimitReset = resp.headers.get('x-rate-limit-reset');
+                const retryAfter = resp.headers.get('retry-after');
+                return { status: status, data: data, rateLimitReset: rateLimitReset, retryAfter: retryAfter };
             } catch (e) {
                 return { status: 0, error: e.toString() };
             }
@@ -196,6 +280,11 @@ async def delete_tweet_via_api(page, tweet_id, tag, color):
         result = await page.evaluate(js_code, {"url": endpoint, "headers": headers, "payload": payload})
         status = result.get("status", 0)
         data = result.get("data", {})
+
+        if status == 429:
+            trigger_rate_limit("DeleteTweet", reset_timestamp=result.get("rateLimitReset"), retry_after=result.get("retryAfter"), tag=tag)
+            return False
+
         if status == 200 and ("data" in data or "delete_tweet" in str(data)):
             page._last_deleted_tweet_timestamp = time.time()
             return True
@@ -235,8 +324,18 @@ async def unfavorite_tweet_via_api(page, tweet_id, tag, color):
                     body: JSON.stringify(payload),
                     credentials: 'include'
                 });
-                const data = await resp.json();
-                return { status: resp.status, data: data };
+                const status = resp.status;
+                let data = null;
+                try {
+                    data = await resp.json();
+                } catch (e) {
+                    try {
+                        data = { text: await resp.text() };
+                    } catch (e2) {}
+                }
+                const rateLimitReset = resp.headers.get('x-rate-limit-reset');
+                const retryAfter = resp.headers.get('retry-after');
+                return { status: status, data: data, rateLimitReset: rateLimitReset, retryAfter: retryAfter };
             } catch (e) {
                 return { status: 0, error: e.toString() };
             }
@@ -245,6 +344,11 @@ async def unfavorite_tweet_via_api(page, tweet_id, tag, color):
         result = await page.evaluate(js_code, {"url": endpoint, "headers": headers, "payload": payload})
         status = result.get("status", 0)
         data = result.get("data", {})
+
+        if status == 429:
+            trigger_rate_limit("UnfavoriteTweet", reset_timestamp=result.get("rateLimitReset"), retry_after=result.get("retryAfter"), tag=tag)
+            return False
+
         if status == 200 and ("data" in data or "unfavorite_tweet" in str(data)):
             page._last_unliked_timestamp = time.time()
             return True
@@ -308,6 +412,10 @@ def setup_network_debug(page, tag, color):
         if any(ep in url for ep in ("DeleteTweet", "UnfavoriteTweet", "DeleteRetweet", "FavoriteTweet", "destroy")):
             endpoint = url.split("?")[0].split("/")[-1]
             status = response.status
+            if status == 429:
+                reset_h = response.headers.get("x-rate-limit-reset")
+                retry_h = response.headers.get("retry-after")
+                trigger_rate_limit(endpoint, reset_timestamp=reset_h, retry_after=retry_h, tag=tag)
             try:
                 data = await response.json()
                 if "errors" in data:
@@ -381,6 +489,13 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
             scroll_attempts_without_actions = 0
             continue
 
+        # Check for rate limit cooldown
+        if await check_and_wait_for_rate_limit(tag, color):
+            await reload_twitter_page(page, tag, color)
+            last_refresh_time = time.time()
+            scroll_attempts_without_actions = 0
+            continue
+
         # If navigated away from target URL, return back
         if not is_on_target_tab(page.url):
             print(f"{color}[{tag}] Navigated away to {page.url}. Returning to {target_url}...{Style.RESET_ALL}")
@@ -406,6 +521,12 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                 break
             if not is_on_target_tab(page.url):
                 print(f"{color}[{tag}] Redirect detected ({page.url}). Breaking to return to timeline...{Style.RESET_ALL}")
+                break
+
+            if await check_and_wait_for_rate_limit(tag, color):
+                await reload_twitter_page(page, tag, color)
+                last_refresh_time = time.time()
+                scroll_attempts_without_actions = 0
                 break
 
             tweet_key = None
@@ -535,6 +656,12 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                         await asyncio.sleep(delay)
                         continue  # Process the next visible tweet in this view immediately!
                     else:
+                        if _rate_limit_reset_time > time.time():
+                            await check_and_wait_for_rate_limit(tag, color)
+                            await reload_twitter_page(page, tag, color)
+                            last_refresh_time = time.time()
+                            scroll_attempts_without_actions = 0
+                            break
                         print(f"{Fore.YELLOW}[TURBO-API] [{tag}] Direct API call did not succeed. Falling back to UI clicker...{Style.RESET_ALL}")
 
                 # 4. Otherwise, it's our own post or our reply in this thread. Delete it via UI.
@@ -706,6 +833,17 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                     await asyncio.sleep(delay)
                     break
                 else:
+                    if _rate_limit_reset_time > time.time():
+                        try:
+                            await page.keyboard.press("Escape")
+                        except Exception:
+                            pass
+                        await check_and_wait_for_rate_limit(tag, color)
+                        await reload_twitter_page(page, tag, color)
+                        last_refresh_time = time.time()
+                        scroll_attempts_without_actions = 0
+                        break
+
                     print(f"{Fore.RED}[{tag}] Post was NOT deleted (DOM element still present, no API response). Retrying...{Style.RESET_ALL}")
                     try:
                         await page.keyboard.press("Escape")
@@ -804,6 +942,13 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
             scroll_attempts_without_actions = 0
             continue
 
+        # Check for rate limit cooldown
+        if await check_and_wait_for_rate_limit(tag, color):
+            await reload_twitter_page(page, tag, color)
+            last_refresh_time = time.time()
+            scroll_attempts_without_actions = 0
+            continue
+
         # If navigated away from likes entirely, return back
         if not is_on_likes_page(page.url):
             print(f"{color}[{tag}] Navigated away to {page.url}. Returning to likes: {active_likes_url}...{Style.RESET_ALL}")
@@ -843,6 +988,12 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
             if not is_on_likes_page(page.url):
                 break
 
+            if await check_and_wait_for_rate_limit(tag, color):
+                await reload_twitter_page(page, tag, color)
+                last_refresh_time = time.time()
+                scroll_attempts_without_actions = 0
+                break
+
             tweet_key = None
             try:
                 status_links = await tweet.locator('a[href*="/status/"]').all()
@@ -878,6 +1029,12 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                     await asyncio.sleep(delay)
                     continue
                 else:
+                    if _rate_limit_reset_time > time.time():
+                        await check_and_wait_for_rate_limit(tag, color)
+                        await reload_twitter_page(page, tag, color)
+                        last_refresh_time = time.time()
+                        scroll_attempts_without_actions = 0
+                        break
                     print(f"{Fore.YELLOW}[TURBO-API] [{tag}] Direct API unfavorite did not succeed. Falling back to UI clicker...{Style.RESET_ALL}")
 
             try:
@@ -935,6 +1092,12 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                         action_taken_in_this_view = True
                         print(f"{color}[{tag}] Successfully un-hearted post #{unheart_count}!{Style.RESET_ALL}")
                     else:
+                        if _rate_limit_reset_time > time.time():
+                            await check_and_wait_for_rate_limit(tag, color)
+                            await reload_twitter_page(page, tag, color)
+                            last_refresh_time = time.time()
+                            scroll_attempts_without_actions = 0
+                            break
                         print(f"{Fore.YELLOW}[DEBUG] [{tag}] Heart state change not verified. Continuing...{Style.RESET_ALL}")
 
                     try:
