@@ -125,21 +125,28 @@ def wait_for_user_login(page):
         log_error("Could not verify login. Please try again.")
         return False
 
-def cleanup_posts_and_replies(page, my_handle, profile_url, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAULT_MAX_DELAY):
+def cleanup_posts_timeline(page, my_handle, target_url, tab_label, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAULT_MAX_DELAY):
     """
-    Cleans up user's own posts, replies in threads, and undoes reposts.
+    Cleans up user's posts, replies in threads, and undoes reposts from a specific timeline URL.
+    Handles both main profile posts (https://x.com/{my_handle}) and thread replies (https://x.com/{my_handle}/with_replies).
     """
-    replies_url = f"{profile_url.rstrip('/')}/with_replies"
-    log_info(f"Navigating to replies view: {replies_url}...")
+    log_info(f"Navigating to {tab_label}: {target_url} ...")
     try:
-        page.goto(replies_url)
+        page.goto(target_url)
         page.wait_for_load_state("domcontentloaded")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(3000)
     except Exception as e:
         if "closed" in str(e).lower():
-            log_warn("Browser closed during navigation to replies.")
+            log_warn(f"Browser closed during navigation to {tab_label}.")
             return 0, 0
-        log_error(f"Error navigating to replies: {e}")
+        log_error(f"Error navigating to {tab_label}: {e}")
+        return 0, 0
+
+    expected_path = target_url.split("x.com/")[-1].split("twitter.com/")[-1].split("?")[0].split("#")[0].rstrip("/").lower()
+
+    def is_on_target_tab(url):
+        curr_path = (url or "").split("x.com/")[-1].split("twitter.com/")[-1].split("?")[0].split("#")[0].rstrip("/").lower()
+        return curr_path == expected_path
 
     deleted_count = 0
     reposts_undone_count = 0
@@ -148,26 +155,26 @@ def cleanup_posts_and_replies(page, my_handle, profile_url, min_delay=DEFAULT_MI
     failed_attempts = {}
     last_refresh_time = time.time()
 
-    log_info("Starting post & reply deletion loop. Press Ctrl+C in terminal to stop.")
+    log_info(f"Starting {tab_label} deletion loop. Press Ctrl+C in terminal to stop.")
 
     while scroll_attempts_without_actions < max_scroll_attempts:
         if page.is_closed():
-            log_warn("Browser closed. Stopping post deletion loop...")
+            log_warn("Browser closed. Stopping deletion loop...")
             break
 
         # Check if 2 minutes elapsed since last refresh to prevent sticking
         if time.time() - last_refresh_time >= PAGE_REFRESH_INTERVAL:
-            if not reload_twitter_page(page, "post deletion"):
+            if not reload_twitter_page(page, tab_label):
                 break
             last_refresh_time = time.time()
             scroll_attempts_without_actions = 0
             continue
 
-        # If navigated away, return back
-        if replies_url and not page.url.startswith(replies_url.rstrip("/")):
-            log_warn(f"Navigated away to {page.url}. Returning to replies: {replies_url}...")
+        # If navigated away from target URL, return back
+        if not is_on_target_tab(page.url):
+            log_warn(f"Navigated away to {page.url}. Returning to {tab_label}: {target_url}...")
             try:
-                page.goto(replies_url)
+                page.goto(target_url)
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_timeout(3000)
             except Exception:
@@ -175,7 +182,7 @@ def cleanup_posts_and_replies(page, my_handle, profile_url, min_delay=DEFAULT_MI
             continue
 
         tweets = page.locator('article[data-testid="tweet"]:not([data-cleanup-processed="true"])').all()
-        log_info(f"Found {len(tweets)} unprocessed tweets in view.")
+        log_info(f"Found {len(tweets)} unprocessed tweets in {tab_label} view.")
 
         action_taken_in_this_view = False
 
@@ -184,8 +191,8 @@ def cleanup_posts_and_replies(page, my_handle, profile_url, min_delay=DEFAULT_MI
                 break
             if time.time() - last_refresh_time >= PAGE_REFRESH_INTERVAL:
                 break
-            if replies_url and not page.url.startswith(replies_url.rstrip("/")):
-                log_warn(f"Redirect detected ({page.url}). Breaking to return to profile...")
+            if not is_on_target_tab(page.url):
+                log_warn(f"Redirect detected ({page.url}). Breaking to return to {tab_label}...")
                 break
 
             tweet_key = None
@@ -465,10 +472,10 @@ def cleanup_posts_and_replies(page, my_handle, profile_url, min_delay=DEFAULT_MI
             scroll_attempts_without_actions = 0
         else:
             scroll_attempts_without_actions += 1
-            # If user has already deleted all their tweets, stop after 5 scrolls without actions
+            # If user has already deleted all their tweets on this tab, stop after 5 scrolls without actions
             max_allowed_scrolls = 5 if (deleted_count == 0 and reposts_undone_count == 0) else max_scroll_attempts
             if scroll_attempts_without_actions >= max_allowed_scrolls:
-                log_info(f"No more posts or replies found after {scroll_attempts_without_actions} scroll attempts.")
+                log_info(f"No more posts found in {tab_label} after {scroll_attempts_without_actions} scroll attempts.")
                 break
 
             log_info(f"No actions taken on current page. Scrolling down (attempt {scroll_attempts_without_actions}/{max_allowed_scrolls})...")
@@ -479,7 +486,7 @@ def cleanup_posts_and_replies(page, my_handle, profile_url, min_delay=DEFAULT_MI
                 if "closed" in str(e).lower():
                     break
 
-    log_success(f"Post/reply cleanup finished: {deleted_count} deleted, {reposts_undone_count} reposts undone.")
+    log_success(f"{tab_label} cleanup finished: {deleted_count} deleted, {reposts_undone_count} reposts undone.")
     return deleted_count, reposts_undone_count
 
 def cleanup_likes(page, my_handle, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAULT_MAX_DELAY):
@@ -487,10 +494,10 @@ def cleanup_likes(page, my_handle, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAUL
     Cleans up all liked posts (hearts) on Twitter/X by navigating to the user's /likes tab
     and systematically un-hearting all posts.
     """
-    likes_url = f"https://x.com/{my_handle}/likes"
-    log_info(f"Navigating to Likes (hearts) page: {likes_url} ...")
+    target_likes_url = f"https://x.com/{my_handle}/likes"
+    log_info(f"Navigating to Likes (hearts) page: {target_likes_url} ...")
     try:
-        page.goto(likes_url)
+        page.goto(target_likes_url)
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_timeout(3000)
     except Exception as e:
@@ -499,6 +506,14 @@ def cleanup_likes(page, my_handle, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAUL
             return 0
         log_error(f"Error navigating to likes: {e}")
         return 0
+
+    def is_on_likes_page(url):
+        u = (url or "").lower()
+        return "/likes" in u or "/i/history/likes" in u
+
+    # Twitter redirects /handle/likes to /i/history/likes for private likes
+    active_likes_url = page.url if is_on_likes_page(page.url) else target_likes_url
+    log_info(f"Active Likes page: {active_likes_url}")
 
     unheart_count = 0
     scroll_attempts_without_actions = 0
@@ -521,11 +536,11 @@ def cleanup_likes(page, my_handle, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAUL
             scroll_attempts_without_actions = 0
             continue
 
-        # If navigated away, return back to likes page
-        if likes_url and not page.url.startswith(likes_url.rstrip("/")):
-            log_warn(f"Navigated away to {page.url}. Returning to likes: {likes_url}...")
+        # If navigated away from likes entirely, return back
+        if not is_on_likes_page(page.url):
+            log_warn(f"Navigated away to {page.url}. Returning to likes: {active_likes_url}...")
             try:
-                page.goto(likes_url)
+                page.goto(active_likes_url)
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_timeout(2500)
             except Exception:
@@ -557,7 +572,7 @@ def cleanup_likes(page, my_handle, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAUL
                 break
             if time.time() - last_refresh_time >= PAGE_REFRESH_INTERVAL:
                 break
-            if likes_url and not page.url.startswith(likes_url.rstrip("/")):
+            if not is_on_likes_page(page.url):
                 break
 
             tweet_key = None
@@ -609,7 +624,7 @@ def cleanup_likes(page, my_handle, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAUL
                     # If click accidentally navigated into status page, return to likes
                     if "/status/" in page.url:
                         log_warn("Accidental navigation into tweet detected. Returning to likes...")
-                        page.goto(likes_url)
+                        page.goto(active_likes_url)
                         page.wait_for_load_state("domcontentloaded")
                         page.wait_for_timeout(2000)
 
@@ -772,25 +787,39 @@ def run_twitter_cleanup(user_data_dir, headless=False, min_delay=DEFAULT_MIN_DEL
             undone_reposts = 0
             unhearted_likes = 0
 
-            # Phase 1: Posts, Replies, Reposts
-            if mode in ("all", "posts"):
-                log_info("\n" + "="*50)
-                log_info("PHASE 1: Deleting Posts, Replies & Undoing Reposts")
-                log_info("="*50)
-                deleted_posts, undone_reposts = cleanup_posts_and_replies(page, my_handle, profile_url, min_delay, max_delay)
+            main_posts_url = f"https://x.com/{my_handle}"
+            replies_url = f"https://x.com/{my_handle}/with_replies"
 
-            # Phase 2: Likes / Hearts
+            # Phase 1: Main Posts from Profile (https://x.com/BradMcA - where all 4,343+ posts live)
+            if mode in ("all", "posts", "main_only"):
+                log_info("\n" + "="*60)
+                log_info(f"PHASE 1: Deleting Main Profile Posts from {main_posts_url}")
+                log_info("="*60)
+                main_deleted, main_reposts = cleanup_posts_timeline(page, my_handle, main_posts_url, "Main Posts (Profile)", min_delay, max_delay)
+                deleted_posts += main_deleted
+                undone_reposts += main_reposts
+
+            # Phase 2: Replies in Threads (https://x.com/BradMcA/with_replies)
+            if mode in ("all", "posts", "replies_only") and not page.is_closed():
+                log_info("\n" + "="*60)
+                log_info(f"PHASE 2: Deleting Thread Replies from {replies_url}")
+                log_info("="*60)
+                rep_deleted, rep_reposts = cleanup_posts_timeline(page, my_handle, replies_url, "Replies", min_delay, max_delay)
+                deleted_posts += rep_deleted
+                undone_reposts += rep_reposts
+
+            # Phase 3: Likes / Hearts (https://x.com/i/history/likes)
             if mode in ("all", "likes") and not page.is_closed():
-                log_info("\n" + "="*50)
-                log_info("PHASE 2: Un-hearting Liked Posts (Clearing Likes)")
-                log_info("="*50)
+                log_info("\n" + "="*60)
+                log_info("PHASE 3: Un-hearting Liked Posts (Clearing Likes)")
+                log_info("="*60)
                 unhearted_likes = cleanup_likes(page, my_handle, min_delay, max_delay)
 
             # Print Final Summary
             print("\n" + f"{Fore.CYAN}=============================================================")
             print(f"{Fore.CYAN}                 TWITTER / X CLEANUP SUMMARY                 ")
             print(f"{Fore.CYAN}=============================================================")
-            if mode in ("all", "posts"):
+            if mode in ("all", "posts", "main_only", "replies_only"):
                 print(f"{Fore.GREEN}  - Posts & Replies Deleted : {deleted_posts}")
                 print(f"{Fore.GREEN}  - Reposts Undone          : {undone_reposts}")
             if mode in ("all", "likes"):
