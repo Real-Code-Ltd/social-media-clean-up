@@ -14,9 +14,9 @@ os.makedirs(TWITTER_USER_DATA, exist_ok=True)
 os.makedirs(FACEBOOK_USER_DATA, exist_ok=True)
 
 # Cleanup pacing (delays in seconds between deletions/actions)
-# Default set to Moderate (1.5 - 2.5s)
-DEFAULT_MIN_DELAY = 1.5
-DEFAULT_MAX_DELAY = 2.5
+# Default set to Fast (1.0s)
+DEFAULT_MIN_DELAY = 1.0
+DEFAULT_MAX_DELAY = 1.0
 
 # Periodic page refresh interval (in seconds) to prevent Twitter UI sticking / memory issues
 PAGE_REFRESH_INTERVAL = 120  # 2 minutes

@@ -29,9 +29,15 @@ async def get_user_post_info(tweet, user_handle):
       - user_post_index: The 0-based index of the user's post in this thread
       - detected_author: The handle of the first author found (for logging)
     """
-    if not user_handle:
+    target_handle = (user_handle or "").strip().lstrip("@").lower()
+    if not target_handle:
         return True, 0, "you"
     try:
+        # Check direct status links: on Twitter, every tweet authored by target has an href with /{target_handle}/status/
+        author_links = await tweet.locator(f'a[href*="/{target_handle}/status/"]').all()
+        if author_links:
+            return True, 0, target_handle
+
         user_name_boxes = await tweet.locator('[data-testid="User-Name"]').all()
         if not user_name_boxes:
             return True, 0, "unknown"
@@ -45,12 +51,12 @@ async def get_user_post_info(tweet, user_handle):
                 if clean_handle and clean_handle not in ("home", "explore", "notifications", "messages"):
                     if not first_author:
                         first_author = clean_handle
-                    if clean_handle == user_handle:
-                        return True, idx, user_handle
+                    if clean_handle == target_handle:
+                        return True, idx, target_handle
                         
             text = (await box.inner_text()).lower()
-            if f"@{user_handle}" in text:
-                return True, idx, user_handle
+            if f"@{target_handle}" in text:
+                return True, idx, target_handle
                 
         return False, -1, first_author or "another user"
     except Exception:
@@ -128,11 +134,54 @@ async def reload_twitter_page(page, tag, color):
         log_warn(f"[{tag}] Reload encountered an issue: {ref_err}")
         return True
 
+def setup_network_debug(page, tag, color):
+    """
+    Listens for Twitter GraphQL requests and responses (DeleteTweet, UnfavoriteTweet, etc.)
+    and logs their HTTP status and body for transparency and debugging.
+    """
+    def on_request(request):
+        url = request.url
+        if any(ep in url for ep in ("DeleteTweet", "UnfavoriteTweet", "DeleteRetweet", "FavoriteTweet", "destroy")):
+            endpoint = url.split("?")[0].split("/")[-1]
+            print(f"{Fore.CYAN}[DEBUG-API] [{tag}] ---> REQUEST: {request.method} {endpoint}...{Style.RESET_ALL}")
+
+    async def on_response(response):
+        url = response.url
+        if any(ep in url for ep in ("DeleteTweet", "UnfavoriteTweet", "DeleteRetweet", "FavoriteTweet", "destroy")):
+            endpoint = url.split("?")[0].split("/")[-1]
+            status = response.status
+            try:
+                data = await response.json()
+                if "errors" in data:
+                    print(f"{Fore.RED}[DEBUG-API] [{tag}] <--- RESPONSE: {endpoint} HTTP {status} ERROR: {data['errors']}{Style.RESET_ALL}")
+                elif "data" in data:
+                    print(f"{Fore.GREEN}[DEBUG-API] [{tag}] <--- RESPONSE: {endpoint} HTTP {status} SUCCESS: {data['data']}{Style.RESET_ALL}")
+                    if "DeleteTweet" in endpoint:
+                        page._last_deleted_tweet_timestamp = time.time()
+                    elif "UnfavoriteTweet" in endpoint:
+                        page._last_unliked_timestamp = time.time()
+                    elif "DeleteRetweet" in endpoint:
+                        page._last_unretweet_timestamp = time.time()
+                else:
+                    print(f"{color}[DEBUG-API] [{tag}] <--- RESPONSE: {endpoint} HTTP {status}: {data}{Style.RESET_ALL}")
+                    if status == 200 and "DeleteTweet" in endpoint:
+                        page._last_deleted_tweet_timestamp = time.time()
+            except Exception:
+                try:
+                    text = await response.text()
+                    print(f"{Fore.YELLOW}[DEBUG-API] [{tag}] <--- RESPONSE: {endpoint} HTTP {status}: {text[:120]}{Style.RESET_ALL}")
+                except Exception:
+                    pass
+
+    page.on("request", on_request)
+    page.on("response", lambda res: asyncio.create_task(on_response(res)))
+
 async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, color, min_delay=DEFAULT_MIN_DELAY, max_delay=DEFAULT_MAX_DELAY):
     """
     Concurrent worker for deleting posts/replies/reposts from a specific timeline URL.
     Runs in its own browser tab.
     """
+    setup_network_debug(page, tag, color)
     print(f"{color}[{tag}] Tab opening: Navigating to {target_url} ...{Style.RESET_ALL}")
     try:
         await page.goto(target_url)
@@ -185,6 +234,8 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
             continue
 
         tweets = await page.locator('article[data-testid="tweet"]:not([data-cleanup-processed="true"])').all()
+        if tweets:
+            print(f"{color}[DEBUG] [{tag}] Found {len(tweets)} unprocessed tweet element(s) in current view.{Style.RESET_ALL}")
         action_taken_in_this_view = False
 
         for tweet in tweets:
@@ -208,9 +259,9 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                 pass
             if not tweet_key:
                 try:
-                    tweet_key = await tweet.evaluate("el => el.innerText.slice(0, 30)")
+                    tweet_key = (await tweet.evaluate("el => el.innerText.slice(0, 35)")).replace("\n", " ")
                 except Exception:
-                    tweet_key = str(random.random())
+                    tweet_key = str(random.random())[:8]
 
             try:
                 await tweet.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
@@ -219,7 +270,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                     await tweet.scroll_into_view_if_needed()
                 except Exception:
                     pass
-            await page.wait_for_timeout(300)
+            await page.wait_for_timeout(250)
 
             try:
                 # 1. Check if this is a Repost
@@ -232,7 +283,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
 
                 unretweet_btn = tweet.locator('[data-testid="unretweet"]')
                 if await unretweet_btn.count() > 0 or is_repost:
-                    print(f"{color}[{tag}] Found repost. Undoing repost...{Style.RESET_ALL}")
+                    print(f"{color}[{tag}] Found repost ({tweet_key}). Undoing repost...{Style.RESET_ALL}")
                     btn_to_click = unretweet_btn.first if await unretweet_btn.count() > 0 else tweet.locator('[data-testid="retweet"]').first
                     try:
                         await btn_to_click.click(timeout=3000)
@@ -249,6 +300,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                     try:
                         await undo_btn.wait_for(state="visible", timeout=3000)
                         await page.wait_for_timeout(250)
+                        print(f"{Fore.CYAN}[DEBUG] [{tag}] Clicking 'Undo Repost' option...{Style.RESET_ALL}")
                         try:
                             await undo_btn.click(timeout=3000)
                         except Exception:
@@ -288,7 +340,10 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
 
                 # 2. Check author across all posts in this thread card
                 has_own_post, post_idx, author_name = await get_user_post_info(tweet, my_handle)
+                print(f"{Fore.CYAN}[DEBUG] [{tag}] Tweet check ({tweet_key}): is_own={has_own_post}, post_idx={post_idx}, author=@{author_name}{Style.RESET_ALL}")
+
                 if not has_own_post:
+                    print(f"{Fore.YELLOW}[DEBUG] [{tag}] Skipping post authored by @{author_name} (target is @{my_handle}){Style.RESET_ALL}")
                     try:
                         await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
                     except Exception:
@@ -297,11 +352,10 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
 
                 # 3. Otherwise, it's our own post or our reply in this thread. Delete it.
                 user_name_boxes = await tweet.locator('[data-testid="User-Name"]').all()
-                carets = await tweet.locator('[data-testid="caret"]').all()
-                if not carets:
-                    carets = await tweet.locator('[aria-label="More"], [aria-label="More actions"]').all()
+                carets = await tweet.locator('[data-testid="caret"], [aria-label="More"], [aria-label="More actions"]').all()
 
                 if not carets:
+                    print(f"{Fore.YELLOW}[DEBUG] [{tag}] No caret button found for tweet {tweet_key}. Skipping.{Style.RESET_ALL}")
                     try:
                         await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
                     except Exception:
@@ -312,17 +366,19 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                     if post_idx < len(user_name_boxes):
                         try:
                             await user_name_boxes[post_idx].evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
-                            await page.wait_for_timeout(300)
+                            await page.wait_for_timeout(250)
                         except Exception:
                             pass
 
-                caret_btn = carets[post_idx] if post_idx < len(carets) else carets[-1]
+                caret_idx = post_idx if post_idx < len(carets) else len(carets) - 1
+                caret_btn = carets[caret_idx]
 
                 try:
                     await caret_btn.scroll_into_view_if_needed()
                 except Exception:
                     pass
 
+                print(f"{Fore.CYAN}[DEBUG] [{tag}] Clicking caret #{caret_idx + 1}/{len(carets)} for tweet {tweet_key}...{Style.RESET_ALL}")
                 try:
                     await caret_btn.click(timeout=3000)
                 except Exception:
@@ -342,6 +398,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                         menu_appeared = False
 
                 if not menu_appeared:
+                    print(f"{Fore.YELLOW}[DEBUG] [{tag}] Caret dropdown did not appear for tweet {tweet_key}.{Style.RESET_ALL}")
                     try:
                         await page.keyboard.press("Escape")
                     except Exception:
@@ -354,82 +411,30 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                             pass
                     continue
 
-                delete_btn = dropdown.locator('[role="menuitem"]').filter(has_text="Delete").first
-                if await delete_btn.count() == 0:
-                    delete_btn = dropdown.locator('[data-testid="delete"], [role="menuitem"]:has-text("Delete")').first
-
-                has_delete = False
-                try:
-                    if await delete_btn.count() > 0 and await delete_btn.is_visible():
-                        has_delete = True
-                    else:
-                        await delete_btn.wait_for(state="visible", timeout=2000)
-                        has_delete = True
-                except Exception:
-                    has_delete = False
-
-                if has_delete:
+                menu_items = await dropdown.locator('[role="menuitem"]').all()
+                menu_texts = []
+                for item in menu_items:
                     try:
-                        await delete_btn.scroll_into_view_if_needed()
-                        await delete_btn.click(timeout=3000)
+                        t = (await item.inner_text()).replace("\n", " ").strip()
+                        menu_texts.append(t)
                     except Exception:
-                        await delete_btn.click(force=True, timeout=3000)
+                        pass
+                print(f"{Fore.CYAN}[DEBUG] [{tag}] Caret menu items: {menu_texts}{Style.RESET_ALL}")
 
-                    confirm_btn = page.locator(
-                        '[data-testid="confirmationSheetConfirm"], '
-                        '[data-testid="confirmationSheetDialog"] button:has-text("Delete"), '
-                        '[data-testid="confirmationSheetDialog"] [role="button"]:has-text("Delete"), '
-                        '[role="dialog"] button:has-text("Delete"), '
-                        '[role="dialog"] [role="button"]:has-text("Delete"), '
-                        '[role="alertdialog"] button:has-text("Delete"), '
-                        '[role="alertdialog"] [role="button"]:has-text("Delete")'
-                    ).first
-
-                    try:
-                        await confirm_btn.wait_for(state="visible", timeout=6000)
-                        await page.wait_for_timeout(350)
-                        try:
-                            await confirm_btn.click(timeout=3000)
-                        except Exception:
-                            await confirm_btn.click(force=True, timeout=3000)
-
-                        try:
-                            await confirm_btn.wait_for(state="hidden", timeout=3500)
-                        except Exception:
-                            pass
-
-                        deleted_count += 1
-                        action_taken_in_this_view = True
-                        if post_idx > 0:
-                            print(f"{color}[{tag}] Deleted reply #{deleted_count}!{Style.RESET_ALL}")
-                        else:
-                            print(f"{color}[{tag}] Deleted tweet #{deleted_count}!{Style.RESET_ALL}")
-
-                        try:
-                            await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
-                        except Exception:
-                            pass
-
-                        delay = random.uniform(min_delay, max_delay)
-                        print(f"{color}[{tag}] Pacing: waiting {delay:.1f}s before next post...{Style.RESET_ALL}")
-                        await asyncio.sleep(delay)
+                # Find delete item
+                delete_item = None
+                for idx_m, item in enumerate(menu_items):
+                    if idx_m < len(menu_texts) and "delete" in menu_texts[idx_m].lower():
+                        delete_item = item
                         break
-                    except Exception as conf_err:
-                        print(f"{color}[{tag}] Could not confirm deletion in modal: {conf_err}{Style.RESET_ALL}")
-                        try:
-                            await page.keyboard.press("Escape")
-                            await page.wait_for_timeout(300)
-                            await page.keyboard.press("Escape")
-                        except Exception:
-                            pass
-                        failed_attempts[tweet_key] = failed_attempts.get(tweet_key, 0) + 1
-                        if failed_attempts[tweet_key] >= 2:
-                            try:
-                                await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
-                            except Exception:
-                                pass
-                        continue
-                else:
+
+                if not delete_item:
+                    fallback_del = dropdown.locator('[data-testid="delete"], [role="menuitem"]:has-text("Delete"), button:has-text("Delete")').first
+                    if await fallback_del.count() > 0 and await fallback_del.is_visible():
+                        delete_item = fallback_del
+
+                if not delete_item:
+                    print(f"{Fore.YELLOW}[DEBUG] [{tag}] 'Delete' option NOT found in menu for {tweet_key}. Options were: {menu_texts}{Style.RESET_ALL}")
                     try:
                         await page.keyboard.press("Escape")
                     except Exception:
@@ -438,6 +443,93 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                         await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
                     except Exception:
                         pass
+                    continue
+
+                t_delete_start = time.time()
+                print(f"{Fore.CYAN}[DEBUG] [{tag}] Found 'Delete' in menu. Clicking Delete option...{Style.RESET_ALL}")
+                try:
+                    await delete_item.click(timeout=3000)
+                except Exception:
+                    await delete_item.click(force=True, timeout=3000)
+
+                # Look directly for the confirmation button on Twitter's confirmation dialog
+                confirm_btn = page.locator(
+                    '[data-testid="confirmationSheetConfirm"], '
+                    '[data-testid="confirmationSheetDialog"] button:has-text("Delete"), '
+                    'div[role="dialog"]:not([aria-hidden="true"]) button:has-text("Delete")'
+                ).first
+
+                try:
+                    await confirm_btn.wait_for(state="visible", timeout=2000)
+                    btn_text = (await confirm_btn.inner_text()).strip()
+                    print(f"{Fore.CYAN}[DEBUG] [{tag}] Found confirmation button ({repr(btn_text)}). Clicking confirm...{Style.RESET_ALL}")
+                    try:
+                        await confirm_btn.click(timeout=2000)
+                    except Exception:
+                        await confirm_btn.click(force=True, timeout=2000)
+                except Exception:
+                    # Confirmation modal might not be required, or DeleteTweet already triggered on menu click
+                    pass
+
+                # --- DUAL VERIFICATION STEP ---
+                # Check 1: Did the DeleteTweet GraphQL API respond with HTTP 200 SUCCESS?
+                # Check 2: Did the tweet element detach or disappear from the DOM?
+                detached = False
+                try:
+                    await tweet.wait_for(state="detached", timeout=3500)
+                    detached = True
+                    print(f"{Fore.GREEN}[DEBUG] [{tag}] Verified: Tweet successfully DETACHED from DOM!{Style.RESET_ALL}")
+                except Exception:
+                    try:
+                        if not await tweet.is_visible():
+                            detached = True
+                            print(f"{Fore.GREEN}[DEBUG] [{tag}] Verified: Tweet is no longer visible.{Style.RESET_ALL}")
+                    except Exception:
+                        detached = True
+
+                api_success = getattr(page, "_last_deleted_tweet_timestamp", 0) >= t_delete_start
+                if api_success:
+                    print(f"{Fore.GREEN}[DEBUG] [{tag}] Verified: DeleteTweet GraphQL API confirmed HTTP 200 SUCCESS!{Style.RESET_ALL}")
+                    detached = True
+
+                # Check for toast notification from Twitter
+                try:
+                    toast = page.locator('[data-testid="toast"], [role="alert"]').first
+                    if await toast.count() > 0 and await toast.is_visible():
+                        t_text = (await toast.inner_text()).replace("\n", " ")
+                        print(f"{Fore.YELLOW}[DEBUG] [{tag}] Twitter notification banner: {t_text}{Style.RESET_ALL}")
+                except Exception:
+                    pass
+
+                if detached:
+                    deleted_count += 1
+                    action_taken_in_this_view = True
+                    if post_idx > 0:
+                        print(f"{color}[{tag}] Successfully deleted reply #{deleted_count}!{Style.RESET_ALL}")
+                    else:
+                        print(f"{color}[{tag}] Successfully deleted post #{deleted_count}!{Style.RESET_ALL}")
+
+                    try:
+                        await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
+                    except Exception:
+                        pass
+
+                    delay = random.uniform(min_delay, max_delay)
+                    print(f"{color}[{tag}] Pacing: waiting {delay:.1f}s before next post...{Style.RESET_ALL}")
+                    await asyncio.sleep(delay)
+                    break
+                else:
+                    print(f"{Fore.RED}[{tag}] Post was NOT deleted (DOM element still present, no API response). Retrying...{Style.RESET_ALL}")
+                    try:
+                        await page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+                    failed_attempts[tweet_key] = failed_attempts.get(tweet_key, 0) + 1
+                    if failed_attempts[tweet_key] >= 2:
+                        try:
+                            await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
+                        except Exception:
+                            pass
                     continue
 
             except Exception as ex:
@@ -461,7 +553,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
             scroll_attempts_without_actions = 0
         else:
             scroll_attempts_without_actions += 1
-            max_allowed_scrolls = 5 if (deleted_count == 0 and reposts_undone_count == 0) else max_scroll_attempts
+            max_allowed_scrolls = 15
             if scroll_attempts_without_actions >= max_allowed_scrolls:
                 print(f"{color}[{tag}] No more posts found after {scroll_attempts_without_actions} scrolls.{Style.RESET_ALL}")
                 break
@@ -482,6 +574,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
     Concurrent worker for un-hearting all liked posts.
     Runs in its own browser tab.
     """
+    setup_network_debug(page, tag, color)
     target_likes_url = f"https://x.com/{my_handle}/likes"
     print(f"{color}[{tag}] Tab opening: Navigating to {target_likes_url} ...{Style.RESET_ALL}")
     try:
@@ -504,7 +597,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
 
     unheart_count = 0
     scroll_attempts_without_actions = 0
-    max_scroll_attempts = 10
+    max_scroll_attempts = 15
     failed_attempts = {}
     last_refresh_time = time.time()
 
@@ -549,6 +642,8 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
             pass
 
         tweets = await page.locator('article[data-testid="tweet"]:not([data-cleanup-processed="true"])').all()
+        if tweets:
+            print(f"{color}[DEBUG] [{tag}] Found {len(tweets)} unprocessed tweet(s) on likes page.{Style.RESET_ALL}")
         action_taken_in_this_view = False
 
         for tweet in tweets:
@@ -571,9 +666,9 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                 pass
             if not tweet_key:
                 try:
-                    tweet_key = await tweet.evaluate("el => el.innerText.slice(0, 30)")
+                    tweet_key = (await tweet.evaluate("el => el.innerText.slice(0, 35)")).replace("\n", " ")
                 except Exception:
-                    tweet_key = str(random.random())
+                    tweet_key = str(random.random())[:8]
 
             try:
                 await tweet.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
@@ -596,6 +691,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                     except Exception:
                         pass
 
+                    print(f"{Fore.CYAN}[DEBUG] [{tag}] Clicking heart to unlike ({tweet_key})...{Style.RESET_ALL}")
                     try:
                         await unlike_btn.click(timeout=2500)
                     except Exception:
@@ -609,9 +705,26 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                         await page.wait_for_load_state("domcontentloaded")
                         await page.wait_for_timeout(2000)
 
-                    unheart_count += 1
-                    action_taken_in_this_view = True
-                    print(f"{color}[{tag}] Un-hearted post #{unheart_count}!{Style.RESET_ALL}")
+                    # Verify heart state changed to un-liked
+                    verified = False
+                    try:
+                        like_btn = tweet.locator('[data-testid="like"]').first
+                        await like_btn.wait_for(state="visible", timeout=2000)
+                        verified = True
+                        print(f"{Fore.GREEN}[DEBUG] [{tag}] Heart icon changed to un-liked (empty heart)!{Style.RESET_ALL}")
+                    except Exception:
+                        try:
+                            if not await unlike_btn.is_visible():
+                                verified = True
+                        except Exception:
+                            verified = True
+
+                    if verified:
+                        unheart_count += 1
+                        action_taken_in_this_view = True
+                        print(f"{color}[{tag}] Successfully un-hearted post #{unheart_count}!{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.YELLOW}[DEBUG] [{tag}] Heart state change not verified. Continuing...{Style.RESET_ALL}")
 
                     try:
                         await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
@@ -801,7 +914,8 @@ async def _async_run_twitter_cleanup(user_data_dir, headless=False, min_delay=DE
                         t.cancel()
                 return
 
-            deleted_posts = 0
+            main_posts_deleted = 0
+            replies_deleted = 0
             undone_reposts = 0
             unhearted_likes = 0
 
@@ -809,20 +923,29 @@ async def _async_run_twitter_cleanup(user_data_dir, headless=False, min_delay=DE
                 if isinstance(res, Exception):
                     if "closed" not in str(res).lower() and not isinstance(res, (asyncio.CancelledError, KeyboardInterrupt)):
                         log_warn(f"Tab {role} encountered an error: {res}")
-                elif role in ("posts", "replies"):
+                elif role == "posts":
                     del_cnt, rep_cnt = res
-                    deleted_posts += del_cnt
+                    main_posts_deleted += del_cnt
+                    undone_reposts += rep_cnt
+                elif role == "replies":
+                    del_cnt, rep_cnt = res
+                    replies_deleted += del_cnt
                     undone_reposts += rep_cnt
                 elif role == "likes":
                     unhearted_likes += res
 
-            # Print Final Combined Summary
+            # Print Final Summary tailored to the selected mode
             print("\n" + f"{Fore.CYAN}=============================================================")
             print(f"{Fore.CYAN}                 TWITTER / X CLEANUP SUMMARY                 ")
             print(f"{Fore.CYAN}=============================================================")
-            print(f"{Fore.GREEN}  - Total Posts & Replies Deleted : {deleted_posts}")
-            print(f"{Fore.GREEN}  - Total Reposts Undone          : {undone_reposts}")
-            print(f"{Fore.MAGENTA}  - Total Likes Un-hearted        : {unhearted_likes}")
+            if mode in ("all", "posts", "main_only"):
+                print(f"{Fore.GREEN}  - Main Profile Posts Deleted   : {main_posts_deleted}")
+            if mode in ("all", "posts"):
+                print(f"{Fore.CYAN}  - Thread Replies Deleted       : {replies_deleted}")
+            if mode in ("all", "posts", "main_only"):
+                print(f"{Fore.YELLOW}  - Total Reposts Undone         : {undone_reposts}")
+            if mode in ("all", "likes"):
+                print(f"{Fore.MAGENTA}  - Total Likes Un-hearted       : {unhearted_likes}")
             print(f"{Fore.CYAN}=============================================================\n")
 
         finally:

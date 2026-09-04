@@ -25,26 +25,29 @@ def print_banner():
 
 def prompt_pacing_selection():
     print(f"\n{Fore.WHITE}Select cleanup speed:")
-    print(f"  {Fore.GREEN}1. Safe & Steady (2.5 - 4.5s delay)")
-    print(f"  {Fore.GREEN}2. Moderate (1.5 - 2.5s delay - Default)")
-    print(f"  {Fore.GREEN}3. Custom delay")
+    print(f"  {Fore.GREEN}1. Fast (1.0s delay - Default)")
+    print(f"  {Fore.GREEN}2. Moderate (1.5 - 2.5s delay)")
+    print(f"  {Fore.GREEN}3. Safe & Steady (2.5 - 4.5s delay)")
+    print(f"  {Fore.GREEN}4. Custom delay")
     
-    speed_choice = input(f"{Fore.WHITE}Enter speed selection (1, 2, or 3) [Default: 2]: ").strip()
+    speed_choice = input(f"{Fore.WHITE}Enter speed selection (1, 2, 3, or 4) [Default: 1]: ").strip()
     
-    if speed_choice == "1":
-        return 2.5, 4.5
+    if speed_choice == "2":
+        return 1.5, 2.5
     elif speed_choice == "3":
+        return 2.5, 4.5
+    elif speed_choice == "4":
         try:
-            custom_min = float(input("Enter minimum delay in seconds (e.g. 3.0): ").strip())
-            custom_max = float(input("Enter maximum delay in seconds (e.g. 5.0): ").strip())
+            custom_min = float(input("Enter minimum delay in seconds (e.g. 1.0): ").strip())
+            custom_max = float(input("Enter maximum delay in seconds (e.g. 2.0): ").strip())
             if custom_min > 0 and custom_max >= custom_min:
                 return custom_min, custom_max
             else:
-                print(f"{Fore.YELLOW}Invalid range. Using default Moderate delay ({DEFAULT_MIN_DELAY} - {DEFAULT_MAX_DELAY}s).")
+                print(f"{Fore.YELLOW}Invalid range. Using default Fast delay ({DEFAULT_MIN_DELAY}s).")
         except ValueError:
-            print(f"{Fore.YELLOW}Invalid input. Using default Moderate delay ({DEFAULT_MIN_DELAY} - {DEFAULT_MAX_DELAY}s).")
+            print(f"{Fore.YELLOW}Invalid input. Using default Fast delay ({DEFAULT_MIN_DELAY}s).")
             
-    return 1.5, 2.5
+    return 1.0, 1.0
 
 def prompt_twitter_activity():
     print(f"\n{Fore.WHITE}Select Twitter activity to clean:")
