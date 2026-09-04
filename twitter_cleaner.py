@@ -110,6 +110,28 @@ async def wait_for_user_login(page):
         log_error("Could not verify login. Please try again.")
         return False
 
+async def inject_turbo_styles(page):
+    """
+    Suppresses Twitter's notification toast banners ([data-testid="toast"]) so they never
+    obscure posts or delay subsequent clicks, and reduces CSS transition times to 1ms
+    for instantaneous modal and menu rendering.
+    """
+    try:
+        await page.add_style_tag(content="""
+            [data-testid="toast"], [role="alert"] {
+                display: none !important;
+                pointer-events: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+            }
+            div[role="menu"], [data-testid="confirmationSheetDialog"], [data-testid="Dropdown"] {
+                animation-duration: 0.001s !important;
+                transition-duration: 0.001s !important;
+            }
+        """)
+    except Exception:
+        pass
+
 async def reload_twitter_page(page, tag, color):
     """
     Reloads the current Twitter tab, waits for hydration, and handles cookie consent.
@@ -119,6 +141,7 @@ async def reload_twitter_page(page, tag, color):
         await page.reload()
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(3500)
+        await inject_turbo_styles(page)
         # Dismiss cookie banner if reappeared
         try:
             cookie_btn = page.locator('button:has-text("Refuse non-essential cookies"), button:has-text("Refuse optional cookies"), button:has-text("Close"), [aria-label="Close"]').first
@@ -134,16 +157,151 @@ async def reload_twitter_page(page, tag, color):
         log_warn(f"[{tag}] Reload encountered an issue: {ref_err}")
         return True
 
+async def delete_tweet_via_api(page, tweet_id, tag, color):
+    """
+    Executes an authenticated DeleteTweet GraphQL call directly inside
+    the browser tab via page.evaluate(fetch, ...).
+    Returns True if deletion succeeded, False otherwise.
+    """
+    endpoint = getattr(page, "_delete_tweet_endpoint", None)
+    headers = getattr(page, "_delete_tweet_headers", None)
+    query_id = getattr(page, "_delete_tweet_query_id", None)
+    if not endpoint or not headers:
+        return False
+
+    try:
+        payload = {
+            "variables": {"tweet_id": str(tweet_id)},
+            "queryId": query_id
+        } if query_id else {
+            "variables": {"tweet_id": str(tweet_id)}
+        }
+
+        js_code = """
+        async ({ url, headers, payload }) => {
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(payload),
+                    credentials: 'include'
+                });
+                const data = await resp.json();
+                return { status: resp.status, data: data };
+            } catch (e) {
+                return { status: 0, error: e.toString() };
+            }
+        }
+        """
+        result = await page.evaluate(js_code, {"url": endpoint, "headers": headers, "payload": payload})
+        status = result.get("status", 0)
+        data = result.get("data", {})
+        if status == 200 and ("data" in data or "delete_tweet" in str(data)):
+            page._last_deleted_tweet_timestamp = time.time()
+            return True
+        elif "errors" in data:
+            print(f"{Fore.RED}[TURBO-API] [{tag}] API Error for {tweet_id}: {data['errors']}{Style.RESET_ALL}")
+            return False
+        return False
+    except Exception:
+        return False
+
+async def unfavorite_tweet_via_api(page, tweet_id, tag, color):
+    """
+    Executes an authenticated UnfavoriteTweet GraphQL call directly inside
+    the browser tab via page.evaluate(fetch, ...).
+    Returns True if unliking succeeded, False otherwise.
+    """
+    endpoint = getattr(page, "_unfavorite_tweet_endpoint", None)
+    headers = getattr(page, "_unfavorite_tweet_headers", None)
+    query_id = getattr(page, "_unfavorite_tweet_query_id", None)
+    if not endpoint or not headers:
+        return False
+
+    try:
+        payload = {
+            "variables": {"tweet_id": str(tweet_id)},
+            "queryId": query_id
+        } if query_id else {
+            "variables": {"tweet_id": str(tweet_id)}
+        }
+
+        js_code = """
+        async ({ url, headers, payload }) => {
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify(payload),
+                    credentials: 'include'
+                });
+                const data = await resp.json();
+                return { status: resp.status, data: data };
+            } catch (e) {
+                return { status: 0, error: e.toString() };
+            }
+        }
+        """
+        result = await page.evaluate(js_code, {"url": endpoint, "headers": headers, "payload": payload})
+        status = result.get("status", 0)
+        data = result.get("data", {})
+        if status == 200 and ("data" in data or "unfavorite_tweet" in str(data)):
+            page._last_unliked_timestamp = time.time()
+            return True
+        elif "errors" in data:
+            print(f"{Fore.RED}[TURBO-API] [{tag}] API Error unliking {tweet_id}: {data['errors']}{Style.RESET_ALL}")
+            return False
+        return False
+    except Exception:
+        return False
+
 def setup_network_debug(page, tag, color):
     """
     Listens for Twitter GraphQL requests and responses (DeleteTweet, UnfavoriteTweet, etc.)
     and logs their HTTP status and body for transparency and debugging.
+    Also captures authenticated request headers for high-speed direct API batch deletions.
     """
     def on_request(request):
         url = request.url
         if any(ep in url for ep in ("DeleteTweet", "UnfavoriteTweet", "DeleteRetweet", "FavoriteTweet", "destroy")):
             endpoint = url.split("?")[0].split("/")[-1]
             print(f"{Fore.CYAN}[DEBUG-API] [{tag}] ---> REQUEST: {request.method} {endpoint}...{Style.RESET_ALL}")
+            if "DeleteTweet" in endpoint and request.method == "POST":
+                try:
+                    req_headers = request.headers
+                    page._delete_tweet_endpoint = url
+                    page._delete_tweet_headers = {
+                        "authorization": req_headers.get("authorization", ""),
+                        "x-csrf-token": req_headers.get("x-csrf-token", ""),
+                        "content-type": "application/json",
+                        "x-twitter-active-user": "yes",
+                        "x-twitter-auth-type": req_headers.get("x-twitter-auth-type", "OAuth2Session"),
+                        "x-twitter-client-language": req_headers.get("x-twitter-client-language", "en")
+                    }
+                    post_data = request.post_data_json or {}
+                    if "queryId" in post_data:
+                        page._delete_tweet_query_id = post_data["queryId"]
+                    print(f"{Fore.GREEN}[TURBO-API] [{tag}] Captured DeleteTweet GraphQL endpoint & headers for high-speed deletions!{Style.RESET_ALL}")
+                except Exception:
+                    pass
+            elif "UnfavoriteTweet" in endpoint and request.method == "POST":
+                try:
+                    req_headers = request.headers
+                    page._unfavorite_tweet_endpoint = url
+                    page._unfavorite_tweet_headers = {
+                        "authorization": req_headers.get("authorization", ""),
+                        "x-csrf-token": req_headers.get("x-csrf-token", ""),
+                        "content-type": "application/json",
+                        "x-twitter-active-user": "yes",
+                        "x-twitter-auth-type": req_headers.get("x-twitter-auth-type", "OAuth2Session"),
+                        "x-twitter-client-language": req_headers.get("x-twitter-client-language", "en")
+                    }
+                    post_data = request.post_data_json or {}
+                    if "queryId" in post_data:
+                        page._unfavorite_tweet_query_id = post_data["queryId"]
+                    print(f"{Fore.GREEN}[TURBO-API] [{tag}] Captured UnfavoriteTweet GraphQL endpoint & headers for high-speed unliking!{Style.RESET_ALL}")
+                except Exception:
+                    pass
 
     async def on_response(response):
         url = response.url
@@ -187,6 +345,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
         await page.goto(target_url)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(3000)
+        await inject_turbo_styles(page)
     except Exception as e:
         if "closed" in str(e).lower():
             print(f"{color}[{tag}] Browser tab closed during navigation.{Style.RESET_ALL}")
@@ -203,7 +362,7 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
     deleted_count = 0
     reposts_undone_count = 0
     scroll_attempts_without_actions = 0
-    max_scroll_attempts = 10
+    max_scroll_attempts = 15
     failed_attempts = {}
     last_refresh_time = time.time()
 
@@ -229,10 +388,12 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                 await page.goto(target_url)
                 await page.wait_for_load_state("domcontentloaded")
                 await page.wait_for_timeout(3000)
+                await inject_turbo_styles(page)
             except Exception:
                 break
             continue
 
+        await inject_turbo_styles(page)
         tweets = await page.locator('article[data-testid="tweet"]:not([data-cleanup-processed="true"])').all()
         if tweets:
             print(f"{color}[DEBUG] [{tag}] Found {len(tweets)} unprocessed tweet element(s) in current view.{Style.RESET_ALL}")
@@ -350,7 +511,33 @@ async def cleanup_posts_timeline(page, my_handle, target_url, tab_label, tag, co
                         pass
                     continue
 
-                # 3. Otherwise, it's our own post or our reply in this thread. Delete it.
+                # 3. HIGH-SPEED DIRECT API DELETION (TURBO MODE):
+                # If we have captured the authenticated DeleteTweet GraphQL endpoint and tweet_key is a valid numeric ID,
+                # delete the post directly via in-browser fetch (10x faster, no UI delays or toasts)!
+                if getattr(page, "_delete_tweet_endpoint", None) and str(tweet_key).isdigit():
+                    print(f"{Fore.GREEN}[TURBO-API] [{tag}] Deleting tweet {tweet_key} via direct GraphQL API...{Style.RESET_ALL}")
+                    api_success = await delete_tweet_via_api(page, tweet_key, tag, color)
+                    if api_success:
+                        deleted_count += 1
+                        action_taken_in_this_view = True
+                        if post_idx > 0:
+                            print(f"{color}[{tag}] Successfully deleted reply #{deleted_count}! [TURBO-API]{Style.RESET_ALL}")
+                        else:
+                            print(f"{color}[{tag}] Successfully deleted post #{deleted_count}! [TURBO-API]{Style.RESET_ALL}")
+
+                        try:
+                            await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
+                        except Exception:
+                            pass
+
+                        delay = random.uniform(min_delay, max_delay)
+                        print(f"{color}[{tag}] Pacing: waiting {delay:.1f}s before next post...{Style.RESET_ALL}")
+                        await asyncio.sleep(delay)
+                        continue  # Process the next visible tweet in this view immediately!
+                    else:
+                        print(f"{Fore.YELLOW}[TURBO-API] [{tag}] Direct API call did not succeed. Falling back to UI clicker...{Style.RESET_ALL}")
+
+                # 4. Otherwise, it's our own post or our reply in this thread. Delete it via UI.
                 user_name_boxes = await tweet.locator('[data-testid="User-Name"]').all()
                 carets = await tweet.locator('[data-testid="caret"], [aria-label="More"], [aria-label="More actions"]').all()
 
@@ -581,6 +768,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
         await page.goto(target_likes_url)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(3000)
+        await inject_turbo_styles(page)
     except Exception as e:
         if "closed" in str(e).lower():
             print(f"{color}[{tag}] Browser tab closed during navigation.{Style.RESET_ALL}")
@@ -623,6 +811,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                 await page.goto(active_likes_url)
                 await page.wait_for_load_state("domcontentloaded")
                 await page.wait_for_timeout(2500)
+                await inject_turbo_styles(page)
             except Exception:
                 break
             continue
@@ -670,6 +859,27 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                 except Exception:
                     tweet_key = str(random.random())[:8]
 
+            # 1. HIGH-SPEED DIRECT API UNFAVORITE (TURBO MODE):
+            # If we have captured the authenticated UnfavoriteTweet GraphQL endpoint and tweet_key is a numeric ID,
+            # unlike the post directly via in-browser fetch (10x faster, no UI clicks or animations)!
+            if getattr(page, "_unfavorite_tweet_endpoint", None) and str(tweet_key).isdigit():
+                print(f"{Fore.GREEN}[TURBO-API] [{tag}] Un-favoriting tweet {tweet_key} via direct GraphQL API...{Style.RESET_ALL}")
+                api_success = await unfavorite_tweet_via_api(page, tweet_key, tag, color)
+                if api_success:
+                    unheart_count += 1
+                    action_taken_in_this_view = True
+                    print(f"{color}[{tag}] Successfully un-hearted post #{unheart_count}! [TURBO-API]{Style.RESET_ALL}")
+                    try:
+                        await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")
+                    except Exception:
+                        pass
+                    delay = random.uniform(min_delay, max_delay)
+                    print(f"{color}[{tag}] Pacing: waiting {delay:.1f}s before next un-heart...{Style.RESET_ALL}")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    print(f"{Fore.YELLOW}[TURBO-API] [{tag}] Direct API unfavorite did not succeed. Falling back to UI clicker...{Style.RESET_ALL}")
+
             try:
                 await tweet.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
             except Exception:
@@ -677,7 +887,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                     await tweet.scroll_into_view_if_needed()
                 except Exception:
                     pass
-            await page.wait_for_timeout(250)
+            await page.wait_for_timeout(200)
 
             try:
                 # Find unlike button (red/filled heart)
@@ -697,19 +907,20 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                     except Exception:
                         await unlike_btn.click(force=True, timeout=2500)
 
-                    await page.wait_for_timeout(350)
+                    await page.wait_for_timeout(250)
 
                     # If click accidentally navigated into status page, return to likes
                     if "/status/" in page.url:
                         await page.goto(active_likes_url)
                         await page.wait_for_load_state("domcontentloaded")
                         await page.wait_for_timeout(2000)
+                        await inject_turbo_styles(page)
 
                     # Verify heart state changed to un-liked
                     verified = False
                     try:
                         like_btn = tweet.locator('[data-testid="like"]').first
-                        await like_btn.wait_for(state="visible", timeout=2000)
+                        await like_btn.wait_for(state="visible", timeout=1500)
                         verified = True
                         print(f"{Fore.GREEN}[DEBUG] [{tag}] Heart icon changed to un-liked (empty heart)!{Style.RESET_ALL}")
                     except Exception:
@@ -734,7 +945,7 @@ async def cleanup_likes(page, my_handle, tag="LIKES", color=Fore.MAGENTA, min_de
                     delay = random.uniform(min_delay, max_delay)
                     print(f"{color}[{tag}] Pacing: waiting {delay:.1f}s before next un-heart...{Style.RESET_ALL}")
                     await asyncio.sleep(delay)
-                    break
+                    continue
                 else:
                     try:
                         await tweet.evaluate("el => el.setAttribute('data-cleanup-processed', 'true')")

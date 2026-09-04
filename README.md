@@ -15,11 +15,17 @@ An automated, privacy-first command-line tool to sweep away your past post histo
     *   **Tab 2 `[REPLIES]`**: Deletes your conversation replies and comments in other users' threads (`/with_replies`).
     *   **Tab 3 `[LIKES]`**: Un-hearts all your liked posts on your likes timeline (`/i/history/likes`).
     *   All 3 tabs run simultaneously side-by-side in the same browser session to dramatically accelerate cleanup.
+*   **🚀 Turbo API Direct Deletion & Toast Suppression (New!)**:
+    *   **In-Browser GraphQL API**: Automatically captures authenticated session credentials from the first action and executes subsequent deletions via direct in-browser GraphQL calls (`DeleteTweet` / `UnfavoriteTweet`), cutting deletion time per post from ~4s down to ~0.3s.
+    *   **Zero Banner Interference**: Automatically suppresses Twitter's floating notification toast banner (`data-testid="toast"`) and zeroes out CSS transition delays so animations and popups never block clicks or viewports.
+    *   **Sequential View Processing**: Deletes all visible tweets in a viewport batch without reloading or re-querying the whole DOM from scratch.
 *   **❤️ Complete Likes & Hearts Removal**: Automatically removes all your past likes/hearts without confirmation fatigue.
 *   **⏱️ 2-Minute Sticking Safeguard**: Every 2 minutes, the active tabs automatically refresh to flush browser memory leaks, clear virtualized timeline sticking, and ensure steady progress through massive post histories.
-*   **🛡️ Human-Like Pacing & Anti-Detection**:
-    *   **Safe & Steady**: 2.5s – 4.5s delay between actions.
-    *   **Moderate [Default]**: 1.5s – 2.5s delay between actions.
+*   **🛡️ Human-Like & Turbo Pacing Options**:
+    *   **Turbo Mode [Default]**: 0.3s – 0.5s delay (Ideal for 1,000+ posts).
+    *   **Fast**: 1.0s delay.
+    *   **Moderate**: 1.5s – 2.5s delay.
+    *   **Safe & Steady**: 2.5s – 4.5s delay.
     *   **Custom**: User-defined minimum and maximum delay.
 *   **🔐 One-Time Sign In**: Uses Playwright's local persistent browser profile. You only log in once in the visible browser; future runs remember your session automatically!
 *   **🎨 Vibrant Color-Coded Terminal Dashboard**: Real-time terminal feedback color-coded per stream:
@@ -88,10 +94,12 @@ When launched, the interactive CLI allows you to press <kbd>Enter</kbd> to accep
     *   `2. Main Profile Posts only [1 Tab]`: Targets only your main profile posts (`https://x.com/your_handle`).
     *   `3. Posts & Replies [Multi-Tab: 2 Concurrent Tabs]`: Cleans all tweets and thread replies.
     *   `4. Likes / Hearts only [1 Tab]`: Cleans only your likes/hearts history.
-4.  **Speed Selection** `[Default: 2 - Moderate]`:
-    *   `1. Safe & Steady` (2.5s – 4.5s delay)
-    *   `2. Moderate` (1.5s – 2.5s delay)
-    *   `3. Custom Delay` (specify min/max seconds)
+4.  **Speed Selection** `[Default: 1 - Turbo Mode]`:
+    *   `1. Turbo Mode` (0.3s – 0.5s delay - Recommended for 1000+ posts) `[Default]`
+    *   `2. Fast` (1.0s delay)
+    *   `3. Moderate` (1.5s – 2.5s delay)
+    *   `4. Safe & Steady` (2.5s – 4.5s delay)
+    *   `5. Custom Delay` (specify min/max seconds)
 
 > **Tip**: Press <kbd>Ctrl+C</kbd> in your terminal at any time to pause or stop the cleanup loop safely.
 

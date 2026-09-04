@@ -18,6 +18,10 @@ os.makedirs(FACEBOOK_USER_DATA, exist_ok=True)
 DEFAULT_MIN_DELAY = 1.0
 DEFAULT_MAX_DELAY = 1.0
 
+# Turbo pacing for batch API deletion
+TURBO_MIN_DELAY = 0.3
+TURBO_MAX_DELAY = 0.5
+
 # Periodic page refresh interval (in seconds) to prevent Twitter UI sticking / memory issues
 PAGE_REFRESH_INTERVAL = 120  # 2 minutes
 

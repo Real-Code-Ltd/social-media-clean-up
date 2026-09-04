@@ -5,7 +5,7 @@ from colorama import Fore, Style, init
 # Add local path to import configs and modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config import TWITTER_USER_DATA, FACEBOOK_USER_DATA, DEFAULT_MIN_DELAY, DEFAULT_MAX_DELAY
+from config import TWITTER_USER_DATA, FACEBOOK_USER_DATA, DEFAULT_MIN_DELAY, DEFAULT_MAX_DELAY, TURBO_MIN_DELAY, TURBO_MAX_DELAY
 from twitter_cleaner import run_twitter_cleanup
 from facebook_cleaner import run_facebook_cleanup
 
@@ -25,29 +25,32 @@ def print_banner():
 
 def prompt_pacing_selection():
     print(f"\n{Fore.WHITE}Select cleanup speed:")
-    print(f"  {Fore.GREEN}1. Fast (1.0s delay - Default)")
-    print(f"  {Fore.GREEN}2. Moderate (1.5 - 2.5s delay)")
-    print(f"  {Fore.GREEN}3. Safe & Steady (2.5 - 4.5s delay)")
-    print(f"  {Fore.GREEN}4. Custom delay")
+    print(f"  {Fore.GREEN}1. Turbo Mode (0.3 - 0.5s delay - Recommended for 1000+ posts) [Default]")
+    print(f"  {Fore.GREEN}2. Fast (1.0s delay)")
+    print(f"  {Fore.GREEN}3. Moderate (1.5 - 2.5s delay)")
+    print(f"  {Fore.GREEN}4. Safe & Steady (2.5 - 4.5s delay)")
+    print(f"  {Fore.GREEN}5. Custom delay")
     
-    speed_choice = input(f"{Fore.WHITE}Enter speed selection (1, 2, 3, or 4) [Default: 1]: ").strip()
+    speed_choice = input(f"{Fore.WHITE}Enter speed selection (1, 2, 3, 4, or 5) [Default: 1]: ").strip()
     
     if speed_choice == "2":
-        return 1.5, 2.5
+        return 1.0, 1.0
     elif speed_choice == "3":
-        return 2.5, 4.5
+        return 1.5, 2.5
     elif speed_choice == "4":
+        return 2.5, 4.5
+    elif speed_choice == "5":
         try:
-            custom_min = float(input("Enter minimum delay in seconds (e.g. 1.0): ").strip())
-            custom_max = float(input("Enter maximum delay in seconds (e.g. 2.0): ").strip())
+            custom_min = float(input("Enter minimum delay in seconds (e.g. 0.5): ").strip())
+            custom_max = float(input("Enter maximum delay in seconds (e.g. 1.0): ").strip())
             if custom_min > 0 and custom_max >= custom_min:
                 return custom_min, custom_max
             else:
-                print(f"{Fore.YELLOW}Invalid range. Using default Fast delay ({DEFAULT_MIN_DELAY}s).")
+                print(f"{Fore.YELLOW}Invalid range. Using default Turbo delay ({TURBO_MIN_DELAY} - {TURBO_MAX_DELAY}s).")
         except ValueError:
-            print(f"{Fore.YELLOW}Invalid input. Using default Fast delay ({DEFAULT_MIN_DELAY}s).")
+            print(f"{Fore.YELLOW}Invalid input. Using default Turbo delay ({TURBO_MIN_DELAY} - {TURBO_MAX_DELAY}s).")
             
-    return 1.0, 1.0
+    return TURBO_MIN_DELAY, TURBO_MAX_DELAY
 
 def prompt_twitter_activity():
     print(f"\n{Fore.WHITE}Select Twitter activity to clean:")
